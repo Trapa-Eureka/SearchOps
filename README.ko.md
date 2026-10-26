@@ -2,7 +2,7 @@
 
 [English](README.md) · **한국어**
 
-> **상태: Stage 0 (Discovery) 완료 단계. 애플리케이션 코드는 아직 없습니다.**
+> **상태: Stage 1 (Rails 기초) 완료: Rails API가 부팅되고 `/health`가 동작하며 spec이 통과합니다. 검색 기능은 아직 구현되지 않았습니다.**
 > 아래 체크리스트는 이 프로젝트가 **끝났을 때 "예"라고 답할 수 있어야 하는 기준**이며, 구현된 항목에만 `[x]`를 표시합니다.
 
 SearchOps는 [SerpApi](https://serpapi.com)로 키워드 검색을 실행하고, 결과를 스냅샷으로 저장해 **대상 도메인의 순위 변화**를 추적하며, **API 호출의 지연·오류·캐시·사용량**을 관찰하는 웹 애플리케이션입니다. Ruby/Rails를 학습하면서 운영 관점(안정성, 관측성, 테스트)을 갖춘 서비스를 만드는 것이 목적입니다.
@@ -76,8 +76,8 @@ Next.js + TypeScript + Tailwind dashboard
 
 | Stage | 내용 | 상태 |
 |-------|------|------|
-| 0 | Discovery & baseline (`docs/discovery.md`) | 완료 — 확인 대기 |
-| 1 | Ruby/Rails 기초, Rails API 스캐폴드, `/health` | 대기 |
+| 0 | Discovery & baseline (`docs/discovery.md`) | 완료 |
+| 1 | Ruby/Rails 기초, Rails API 스캐폴드, `/health` | 완료 — 확인 대기 |
 | 2 | 도메인 모델, REST API (Keyword CRUD) | 대기 |
 | 3 | SerpApi 연동, 정규화, 순위 추적 | 대기 |
 | 4 | 스케줄 잡, 캐시, 복원력, 메트릭 | 대기 |
@@ -86,16 +86,37 @@ Next.js + TypeScript + Tailwind dashboard
 | 7 | 테스트 · 비교 실험(A/B/C) · 벤치마크 | 대기 |
 | 8 | 배포 · 운영 | 대기 |
 
-## 설정 (예정, 구현 후 검증해서 확정)
+## 로컬 실행 (macOS, Homebrew Ruby 4.0.3, Rails 8.1.4, PostgreSQL 16에서 검증)
 
-실제 값은 `.env`에만 두고 커밋하지 않습니다. 자리표시자만 담긴 `.env.example`을 제공할 예정입니다.
+```bash
+brew services start postgresql@16
+gem install rails
+# Homebrew Ruby의 gem 실행 파일은 기본적으로 PATH에 없습니다:
+export PATH="$(gem env gemdir)/bin:$PATH"
+
+cd backend
+cp .env.example .env          # 자리표시자만 있음. 실제 값은 git에서 제외된 .env에만 둡니다
+bundle install
+bin/rails db:create db:migrate
+
+bundle exec rspec             # 테스트
+bundle exec rubocop           # 린트
+bin/rails server              # 이후: curl localhost:3000/health
+```
+
+`GET /health`는 `200 {"status":"ok","database":"up"}`를 반환하고, DB에 연결할 수 없으면 `503 {"status":"degraded","database":"down"}`을 반환합니다(내부 오류 내용은 응답에 노출하지 않고 로그에 오류 클래스만 남깁니다). Rails 기본 `GET /up`도 그대로 있습니다.
+
+## 설정
+
+실제 값은 `backend/.env`에만 두고 커밋하지 않습니다. `backend/.env.example`에는 자리표시자만 있습니다. 검색 관련 변수는 Stage 3~5에서 사용하기 전까지는 자리표시자입니다.
 
 ```dotenv
 SERPAPI_API_KEY=replace_me
-DATABASE_URL=postgresql://localhost/searchops_development
 LAYA_ENABLED=false
 SEARCH_MAX_REQUESTS_PER_DAY=5
 SEARCH_CACHE_TTL_SECONDS=3600
 ```
 
-> 로컬 실행 명령, 테스트 결과, 벤치마크, 스크린샷은 **실제로 검증된 뒤에** 이 문서에 추가합니다.
+개발/테스트 환경은 `config/database.yml`을 통해 로컬 PostgreSQL(`searchops_development`, `searchops_test`)을 사용합니다. `DATABASE_URL`은 선택적 덮어쓰기용입니다.
+
+> 검색 로직 테스트 결과, 벤치마크, 스크린샷은 **실제로 검증된 뒤에** 이 문서에 추가합니다.

@@ -2,7 +2,7 @@
 
 **English** · [Korean](README.ko.md)
 
-> **Status: Stage 0 (Discovery) is complete. There is no application code yet.**
+> **Status: Stage 1 (Rails foundations) is complete: the Rails API boots, `/health` works, and the specs pass. Search features are not implemented yet.**
 > The checklist below defines what must be answerable with "yes" when the project is finished. An item is marked `[x]` only once it is implemented.
 
 SearchOps runs keyword searches through [SerpApi](https://serpapi.com), stores the results as snapshots, tracks **rank changes for a target domain**, and monitors **latency, errors, cache hits, and usage** of the upstream API. The goal is to learn Ruby/Rails by building a service with production-minded concerns: reliability, observability, and testing.
@@ -76,8 +76,8 @@ After each stage, a summary and a proposed commit message are produced, and the 
 
 | Stage | Content | Status |
 |-------|---------|--------|
-| 0 | Discovery and baseline (`docs/discovery.md`) | Done, awaiting confirmation |
-| 1 | Ruby/Rails basics, Rails API scaffold, `/health` | Pending |
+| 0 | Discovery and baseline (`docs/discovery.md`) | Done |
+| 1 | Ruby/Rails basics, Rails API scaffold, `/health` | Done, awaiting confirmation |
 | 2 | Domain model, REST API (keyword CRUD) | Pending |
 | 3 | SerpApi integration, normalization, rank tracking | Pending |
 | 4 | Scheduled jobs, caching, resilience, metrics | Pending |
@@ -86,16 +86,37 @@ After each stage, a summary and a proposed commit message are produced, and the 
 | 7 | Tests, A/B/C comparison, benchmarks | Pending |
 | 8 | Deployment and operations | Pending |
 
-## Configuration (planned; to be confirmed once implemented)
+## Local setup (verified on macOS, Homebrew Ruby 4.0.3, Rails 8.1.4, PostgreSQL 16)
 
-Real values go only in `.env`, which is never committed. A placeholder-only `.env.example` will be provided.
+```bash
+brew services start postgresql@16
+gem install rails
+# Homebrew Ruby's gem executables are not on PATH by default:
+export PATH="$(gem env gemdir)/bin:$PATH"
+
+cd backend
+cp .env.example .env          # placeholders only; real values stay in the git-ignored .env
+bundle install
+bin/rails db:create db:migrate
+
+bundle exec rspec             # tests
+bundle exec rubocop           # lint
+bin/rails server              # then: curl localhost:3000/health
+```
+
+`GET /health` returns `200 {"status":"ok","database":"up"}`, or `503 {"status":"degraded","database":"down"}` when the database is unreachable (the underlying error is logged by class only, never returned). Rails' built-in `GET /up` also remains.
+
+## Configuration
+
+Real values go only in `backend/.env`, which is never committed. `backend/.env.example` contains placeholders only. The search-related variables are placeholders until they are used in Stages 3–5.
 
 ```dotenv
 SERPAPI_API_KEY=replace_me
-DATABASE_URL=postgresql://localhost/searchops_development
 LAYA_ENABLED=false
 SEARCH_MAX_REQUESTS_PER_DAY=5
 SEARCH_CACHE_TTL_SECONDS=3600
 ```
 
-> Local run commands, test results, benchmarks, and screenshots will be added here only after they have been verified.
+Development and test use the local PostgreSQL through `config/database.yml` (`searchops_development`, `searchops_test`). `DATABASE_URL` is an optional override.
+
+> Test results for search logic, benchmarks, and screenshots will be added here only after they have been verified.

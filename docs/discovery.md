@@ -94,7 +94,6 @@ Proposed directory structure (adapt as the code grows):
 search-ops/
 ├── README.md
 ├── .gitignore
-├── .env.example                # Stage 1
 ├── docs/
 │   ├── discovery.md            # this file
 │   ├── architecture.md         # later
@@ -102,6 +101,7 @@ search-ops/
 │   ├── benchmarks.md           # Stage 7
 │   └── operations.md           # Stage 8
 ├── backend/                    # Rails API (Stage 1)
+│   ├── .env.example
 │   ├── app/controllers/api/v1/
 │   ├── app/models/
 │   ├── app/services/
@@ -118,3 +118,15 @@ search-ops/
 1. Start PostgreSQL locally (for example `brew services start postgresql@16`) and confirm `pg_isready`.
 2. Install Rails and verify it boots on Ruby 4.0.3 (`gem install rails`), then scaffold `rails new backend --api --database=postgresql --skip-test`. If Rails 8.1 does not work on Ruby 4.0.3, report the exact error and options (for example a Ruby version manager) instead of working around it silently.
 3. Add RSpec, a linter (RuboCop), `/health` endpoint, and a request spec.
+
+## 9. Stage 1 update (2026-10-26)
+
+Resolved from the assumptions and entry conditions above:
+- **Rails 8.1.4 works on Ruby 4.0.3** (`require "rails"` loads; the generated app boots; specs, RuboCop, and Brakeman pass). Assumption 1 is confirmed.
+- PostgreSQL 16 is now running as a Homebrew service (`brew services start postgresql@16`).
+- Homebrew Ruby's gem executable directory is not on `PATH`, so `rails` was not found after `gem install rails`. Workaround used: `export PATH="$(gem env gemdir)/bin:$PATH"`. No shell profile was modified.
+- `gem install rails` pulled `rdoc 8.1.0` next to the default `rdoc 7.0.3`, which prints harmless "already initialized constant" warnings in some commands.
+- Generated with `rails new backend --api --database=postgresql --skip-test --skip-git --skip-gitignore --skip-kamal --skip-thruster --skip-docker --skip-ci --skip-solid --skip-active-storage --skip-action-mailbox --skip-action-text --skip-action-mailer`. Queue backend (Solid Queue vs. Sidekiq) and deployment files (Docker/Kamal) are deliberately deferred to Stages 4 and 8.
+- Test framework: RSpec (`rspec-rails`). Lint: `rubocop-rails-omakase`. Security: Brakeman and bundler-audit are in the Gemfile. `dotenv-rails` loads `backend/.env`.
+
+Still unverified: `serpapi` gem compatibility with Ruby 4.0.3 (Stage 3), Laya HTTP contract and Korean accuracy (Stage 5).
