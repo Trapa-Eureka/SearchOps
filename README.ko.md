@@ -2,7 +2,7 @@
 
 [English](README.md) · **한국어**
 
-> **상태: Stage 3 (SerpApi 연동) 완료: 검색이 SerpApi로 실행되고 스냅샷으로 저장되며 순위 변화가 추적됩니다. 픽스처와 HTTP mock으로만 검증했고, 실제 키로 한 검색은 아직 실행하지 않았습니다. 스케줄·캐시·재시도는 Stage 4입니다.**
+> **상태: Stage 4 (잡·캐시·재시도·메트릭) 완료: 검색이 백그라운드 워커에서 실행되며 로컬 캐시, 중복 방지, 일일 예산, 상한이 있는 재시도, 스케줄 점검, 오래된 데이터(stale) 표시, 메트릭 요약을 갖췄습니다. 427개 spec과, 일부러 잘못된 키로 실제 잡 큐를 돌려본 실행으로 검증했습니다. 성공하는 실제 검색은 Stage 3에서 확인했지만, 재시도 경로는 HTTP mock으로만 검증했습니다.**
 > 아래 체크리스트는 이 프로젝트가 **끝났을 때 "예"라고 답할 수 있어야 하는 기준**이며, 구현된 항목에만 `[x]`를 표시합니다.
 
 SearchOps는 [SerpApi](https://serpapi.com)로 키워드 검색을 실행하고, 결과를 스냅샷으로 저장해 **대상 도메인의 순위 변화**를 추적하며, **API 호출의 지연·오류·캐시·사용량**을 관찰하는 웹 애플리케이션입니다. Ruby/Rails를 학습하면서 운영 관점(안정성, 관측성, 테스트)을 갖춘 서비스를 만드는 것이 목적입니다.
@@ -48,11 +48,11 @@ Next.js + TypeScript + Tailwind dashboard
 | # | 질문 | 계획된 접근 | 관련 단계 | 상태 |
 |---|------|-------------|-----------|------|
 | 1 | API 응답의 **정상·오류·빈 결과**를 각각 처리했는가? | `organic_results` 누락/빈 배열 처리, HTTP 200이어도 본문의 오류 페이로드를 감지, 인증·쿼터·레이트리밋·일시적 네트워크·타임아웃·잘못된 요청·스키마 이상으로 오류 분류, 각각 픽스처 테스트 | Stage 3 | [x] |
-| 2 | 검색 API가 **느리거나 실패해도** 서비스가 정상 동작하는가? | 연결/읽기 타임아웃, 일시적 오류만 지수 백오프+지터로 제한 재시도(`Retry-After` 존중), 최종 실패 시 마지막 성공 스냅샷을 **stale 표시**로 유지, 인증/잘못된 요청은 재시도 안 함 | Stage 4 | [ ] |
-| 3 | 검색 요청 **중복을 방지**하고 **사용량을 관리**하는가? | 정규화 쿼리+엔진+로케일+설정+시간창 **핑거프린트**로 멱등 잡 및 동시 중복 실행 방지, 캐시 TTL과 `cache_hit` 기록, 일일 요청 예산·동시성 제한 (한도는 계정/공식 문서에서 확인, 하드코딩 금지) | Stage 4 | [ ] |
+| 2 | 검색 API가 **느리거나 실패해도** 서비스가 정상 동작하는가? | 연결/읽기 타임아웃, 일시적 오류만 지수 백오프+지터로 제한 재시도(`Retry-After` 존중), 최종 실패 시 마지막 성공 스냅샷을 **stale 표시**로 유지, 인증/잘못된 요청은 재시도 안 함 | Stage 4 | [x] |
+| 3 | 검색 요청 **중복을 방지**하고 **사용량을 관리**하는가? | 정규화 쿼리+엔진+로케일+설정+시간창 **핑거프린트**로 멱등 잡 및 동시 중복 실행 방지, 캐시 TTL과 `cache_hit` 기록, 일일 요청 예산·동시성 제한 (한도는 계정/공식 문서에서 확인, 하드코딩 금지) | Stage 4 | [x] |
 | 4 | 검색 결과의 **순위 변화를 정확하게** 계산하는가? | 호스트명 정규화 후 대상 도메인 매칭(정확/서브도메인 규칙 정의·테스트), 순위 부재는 `NULL`("조회 범위 내 없음", 0 아님), 검색 설정이 같은 스냅샷끼리만 비교, 작은 숫자 = 더 좋은 순위 | Stage 3 | [x] |
 | 5 | **RSpec** 등으로 핵심 로직을 테스트했는가? | 정규화기, 도메인 매칭, 순위 delta, 핑거프린트, 플랜 검증기, 예산 규칙 단위 테스트 + 요청/통합 테스트 + 프로바이더 어댑터(정상/빈/4xx/429/5xx/타임아웃/깨진 JSON) + Laya 어댑터(미지원 의도, 프롬프트 인젝션, 타임아웃, 비활성) | 전 단계, Stage 7 | [ ] |
-| 6 | 검색 **실행 시간과 오류 원인**을 로그로 확인할 수 있는가? | `SearchRun`에 시작/종료·업스트림 지연·오류 분류·캐시 출처 저장, 구조화 로그, p50/p95·성공/실패·오류 분류별 건수·캐시 적중률·업스트림 호출 수 집계(`/api/v1/metrics/summary`). 검색어·비밀값은 로그에서 최소화 | Stage 4 | [ ] |
+| 6 | 검색 **실행 시간과 오류 원인**을 로그로 확인할 수 있는가? | `SearchRun`에 시작/종료·업스트림 지연·오류 분류·캐시 출처 저장, 구조화 로그, p50/p95·성공/실패·오류 분류별 건수·캐시 적중률·업스트림 호출 수 집계(`/api/v1/metrics/summary`). 검색어·비밀값은 로그에서 최소화 | Stage 4 | [x] |
 | 7 | **Laya 없이도** 핵심 흐름이 동작하는가? | `LAYA_ENABLED=false`에서 키워드 등록 → 검색 → 스냅샷 → 비교 → 스케줄 점검 전부 동작. 자연어는 안전한 폴백(명확화 요청)만 반환 | Stage 5 | [ ] |
 | 8 | 자연어 계획이 **검증·확인** 후에만 실행되는가? | 알려진 필드만 허용(화이트리스트), 낮은 신뢰도/무효/불가 시 임의 검색 금지, 비용이 큰 검색은 사용자 확인 후 실행 | Stage 5 | [ ] |
 
@@ -65,7 +65,7 @@ Next.js + TypeScript + Tailwind dashboard
 ## 기술 스택 (설치 버전 확인 후 확정)
 
 - Backend: Ruby, Rails(API mode), Active Record, PostgreSQL, RSpec(또는 Minitest 중 하나로 통일)
-- Jobs: Active Job (로컬은 호환 어댑터 → 운영은 Solid Queue 또는 Sidekiq 중 하나)
+- Jobs: Solid Queue 기반 Active Job (같은 PostgreSQL에 저장, Redis 불필요), 스케줄 점검은 반복 작업(recurring)으로 실행
 - 검색: SerpApi (공식 Ruby 클라이언트 호환 확인 시 사용, 아니면 명시적 타임아웃의 얇은 HTTPS 어댑터)
 - Frontend: Next.js, React, TypeScript, Tailwind
 - 의도 분류(선택): Laya — `LayaClassifier` 인터페이스 뒤에 어댑터로 격리 (조사 결과는 [docs/discovery.md](docs/discovery.md))
@@ -79,8 +79,8 @@ Next.js + TypeScript + Tailwind dashboard
 | 0 | Discovery & baseline (`docs/discovery.md`) | 완료 |
 | 1 | Ruby/Rails 기초, Rails API 스캐폴드, `/health` | 완료 |
 | 2 | 도메인 모델, REST API (Keyword CRUD) | 완료 |
-| 3 | SerpApi 연동, 정규화, 순위 추적 | 완료 — 확인 대기 |
-| 4 | 스케줄 잡, 캐시, 복원력, 메트릭 | 대기 |
+| 3 | SerpApi 연동, 정규화, 순위 추적 | 완료 |
+| 4 | 스케줄 잡, 캐시, 복원력, 메트릭 | 완료 — 확인 대기 |
 | 5 | Laya 사전 분류기 연동 | 대기 |
 | 6 | Next.js 대시보드 | 대기 |
 | 7 | 테스트 · 비교 실험(A/B/C) · 벤치마크 | 대기 |
@@ -101,15 +101,28 @@ bin/rails db:create db:migrate
 
 bundle exec rspec             # 테스트
 bundle exec rubocop           # 린트
-bin/rails server              # 이후: curl localhost:3000/health
+bin/rails server              # API + 백그라운드 워커 (개발 환경에서는 Solid Queue가 Puma 안에서 실행됨)
+                              # 이후: curl localhost:3000/health
 ```
 
 `GET /health`는 `200 {"status":"ok","database":"up"}`를 반환하고, DB에 연결할 수 없으면 `503 {"status":"degraded","database":"down"}`을 반환합니다(내부 오류 내용은 응답에 노출하지 않고 로그에 오류 클래스만 남깁니다). Rails 기본 `GET /up`도 그대로 있습니다.
 
 ## API
 
-`/api/v1/keywords` 키워드 CRUD, 검색 실행·조회(`POST/GET /api/v1/keywords/:id/searches`), 순위 이력(`GET /api/v1/keywords/:id/rank_history`)을 검증, 페이지네이션, 공통 JSON 오류 형식과 함께 제공합니다. 전체 계약, 데이터 모델, 알려진 제한은 [docs/api-contract.md](docs/api-contract.md)(영어)를 참고하세요. 
-실제 검색을 하려면 `backend/.env`의 `SERPAPI_API_KEY`에 SerpApi 키를 넣고 서버를 재시작하세요. 검색 1회는 SerpApi 요청 1회이고(SerpApi 쪽 캐시 적중분은 무료), `SEARCH_MAX_REQUESTS_PER_DAY`가 하루 실행 횟수를 제한합니다. 아직 인증이 없으므로 로컬에서만 실행하세요.
+`/api/v1/keywords` 키워드 CRUD, 비동기 검색(`POST/GET /api/v1/keywords/:id/searches`), 순위 이력(`GET /api/v1/keywords/:id/rank_history`), 메트릭(`GET /api/v1/metrics/summary`)을 검증, 페이지네이션, 공통 JSON 오류 형식과 함께 제공합니다. 전체 계약, 실패 매핑, 재시도·캐시·예산 규칙, 알려진 제한은 [docs/api-contract.md](docs/api-contract.md)(영어)를 참고하세요.
+
+검색은 요청 안에서 SerpApi를 호출하지 않습니다. 요청을 큐에 넣으면 워커가 호출을 수행하고, 클라이언트는 실행(run)을 조회해서 결과를 확인합니다.
+
+```bash
+curl -s -X POST localhost:3000/api/v1/keywords/1/searches    # 202 {"meta":{"outcome":"enqueued"},"data":{"id":7,"status":"queued",...}}
+curl -s localhost:3000/api/v1/keywords/1/searches/7          # 몇 초 뒤: "status":"succeeded" (또는 "failed" + error_category)
+curl -s -X POST localhost:3000/api/v1/keywords/1/searches    # TTL 안에 다시: 200 {"meta":{"outcome":"cache_hit"},...}, SerpApi 호출 없음
+curl -s -X POST "localhost:3000/api/v1/keywords/1/searches?refresh=true"   # 캐시 무시
+curl -s localhost:3000/api/v1/metrics/summary                # p50/p95, 오류 분류, 캐시 적중률, 예산, 큐 상태
+bin/rails searchops:serpapi_quota                            # SerpApi 플랜과 남은 검색 횟수 (무료 Account API)
+```
+
+실제 검색을 하려면 `backend/.env`의 `SERPAPI_API_KEY`에 SerpApi 키를 넣고 서버를 재시작하세요. 실제 SerpApi 호출은 `SEARCH_MAX_REQUESTS_PER_DAY`로 집계되며(재시도 포함) 캐시 적중은 무료입니다. 스케줄(`daily`/`weekly`) 키워드는 서버 또는 `bin/jobs`가 실행 중일 때 반복 작업이 자동으로 검색합니다. 아직 인증이 없으므로 로컬에서만 실행하세요.
 
 ## 설정
 
@@ -120,6 +133,7 @@ SERPAPI_API_KEY=replace_me
 LAYA_ENABLED=false
 SEARCH_MAX_REQUESTS_PER_DAY=5
 SEARCH_CACHE_TTL_SECONDS=3600
+SEARCH_MAX_CONCURRENCY=2
 SEARCH_MAX_KEYWORDS=50
 ```
 

@@ -12,6 +12,11 @@ module Providers
   # The endpoint is a constant: nothing user-supplied is ever used as a fetch target.
   class SerpApiSearchProvider
     ENDPOINT = URI("https://serpapi.com/search").freeze
+    ACCOUNT_ENDPOINT = URI("https://serpapi.com/account.json").freeze
+    ACCOUNT_FIELDS = %w[
+      plan_name searches_per_month plan_searches_left total_searches_left
+      this_month_usage this_hour_searches last_hour_searches account_rate_limit_per_hour
+    ].freeze
     OPEN_TIMEOUT = 5
     READ_TIMEOUT = 15
     MAX_BODY_BYTES = 5 * 1024 * 1024
@@ -29,6 +34,11 @@ module Providers
       new(api_key: ENV["SERPAPI_API_KEY"])
     end
 
+    # True when a usable key is present. Does not contact SerpApi.
+    def self.configured?
+      !UNCONFIGURED_KEYS.include?(ENV["SERPAPI_API_KEY"].to_s.strip)
+    end
+
     def initialize(api_key:, open_timeout: OPEN_TIMEOUT, read_timeout: READ_TIMEOUT, no_cache: false)
       @api_key = api_key.to_s.strip
       raise SearchProvider::NotConfigured, "SERPAPI_API_KEY is not configured" if UNCONFIGURED_KEYS.include?(@api_key)
@@ -39,15 +49,28 @@ module Providers
     end
 
     def search(request)
-      response = perform(request)
-      parse(response.code.to_i, response.body)
+      response = perform(ENDPOINT, query_params(request))
+      parse(response.code.to_i, response.body, response["Retry-After"])
+    end
+
+    # Plan and usage figures from the Account API (documented as free and not counted
+    # toward the monthly quota). Only the quota-related fields are returned: the raw
+    # response also contains the API key and the account e-mail.
+    def account
+      response = perform(ACCOUNT_ENDPOINT, { api_key: @api_key })
+      status = response.code.to_i
+      body = decode(response.body)
+      raise http_error(status, body, response["Retry-After"]) unless status == 200
+      raise SearchProvider::Error.new("SerpApi account response is malformed", category: :schema, http_status: status) unless body.is_a?(Hash)
+
+      body.slice(*ACCOUNT_FIELDS)
     end
 
     private
 
-    def perform(request)
-      uri = ENDPOINT.dup
-      uri.query = URI.encode_www_form(query_params(request))
+    def perform(endpoint, params)
+      uri = endpoint.dup
+      uri.query = URI.encode_www_form(params)
 
       http = Net::HTTP.new(uri.host, uri.port)
       http.use_ssl = true
@@ -75,9 +98,9 @@ module Providers
       }.compact
     end
 
-    def parse(status, raw_body)
+    def parse(status, raw_body, retry_after_header = nil)
       body = decode(raw_body)
-      raise http_error(status, body) unless status == 200
+      raise http_error(status, body, retry_after_header) unless status == 200
       raise SearchProvider::Error.new("SerpApi returned malformed JSON", category: :schema, http_status: status) unless body.is_a?(Hash)
 
       check_embedded_error(body, status)
@@ -95,7 +118,7 @@ module Providers
       nil
     end
 
-    def http_error(status, body)
+    def http_error(status, body, retry_after_header = nil)
       message = error_message(body)
       category =
         case status
@@ -108,7 +131,15 @@ module Providers
         end
 
       detail = message.empty? ? "" : ": #{message}"
-      SearchProvider::Error.new("SerpApi returned HTTP #{status}#{detail}", category: category, http_status: status)
+      SearchProvider::Error.new("SerpApi returned HTTP #{status}#{detail}", category: category, http_status: status,
+                                                                            retry_after: parse_retry_after(retry_after_header))
+    end
+
+    # Retry-After is not mentioned in SerpApi's docs, so this only honors it when present.
+    # Only the delay-in-seconds form is read; an HTTP-date is ignored.
+    def parse_retry_after(value)
+      seconds = Integer(value.to_s.strip, 10, exception: false)
+      seconds if seconds&.positive?
     end
 
     # SerpApi can report failures inside an HTTP 200 body. An empty result set is

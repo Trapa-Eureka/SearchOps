@@ -1,116 +1,76 @@
-# Runs one search for a keyword and records what happened.
+# Performs ONE upstream attempt for a queued run. Deciding what happens next (retry,
+# give up) belongs to ExecuteSearchJob. Laya is never involved: this path is deterministic.
 #
-# Flow: check the daily budget, create a SearchRun, call the provider, then store
-# the normalized results and (when the keyword has a target domain) a RankSnapshot.
-# Provider failures are recorded on the run and returned, not raised, so the caller
-# always gets a run to report. Laya is never involved: this path is deterministic.
-#
-# Stage 3 runs synchronously. Stage 4 moves execution into Active Job and adds
-# caching, deduplication, and retries around this class.
+# Safe to call twice for the same run (at-least-once job delivery): the run is claimed with
+# a conditional update, so only one caller proceeds and the other gets :skipped.
 class SearchOrchestrator
-  def initialize(provider:, budget: SearchBudget)
+  # status: :succeeded, :failed (error is set, run left "running"), or :skipped
+  Attempt = Data.define(:status, :error, :latency_ms)
+
+  def initialize(provider:, budget: SearchBudget, recorder: SearchRunRecorder.new)
     @provider = provider
     @budget = budget
+    @recorder = recorder
   end
 
-  # Returns the finished SearchRun (status "succeeded" or "failed").
-  # Raises SearchBudget::Exceeded before anything is created or sent.
-  def call(keyword)
+  # Raises SearchBudget::Exceeded before anything is sent when the budget is spent.
+  def execute(run)
+    return skipped unless run.reload.status == "queued"
+
+    @budget.check!(exclude_run: run)
+    return skipped unless claim(run)
+
+    keyword = run.keyword
     request = SearchProvider::Request.from_keyword(keyword)
-    @budget.check!
-
-    run = keyword.search_runs.create!(
-      fingerprint: SearchFingerprint.call(request),
-      status: "running",
-      started_at: Time.current,
-      request_metadata: provenance(request)
-    )
-
-    execute(run, keyword, request)
-    log(run)
-    run
-  end
-
-  private
-
-  def execute(run, keyword, request)
     started = monotonic_ms
+
     begin
       response = @provider.search(request)
       latency = monotonic_ms - started
-      record_success(run, keyword, response, latency)
+      @recorder.success(run, keyword, response, latency)
+      log(run, "succeeded", latency)
+      Attempt.new(status: :succeeded, error: nil, latency_ms: latency)
     rescue SearchProvider::Error => error
-      record_failure(run, error, monotonic_ms - started)
+      latency = monotonic_ms - started
+      log(run, "failed", latency, error)
+      Attempt.new(status: :failed, error: error, latency_ms: latency)
     rescue ActiveRecord::RecordInvalid => error
       # Provider output that our own validations reject is a schema problem, not a crash.
-      schema_error = SearchProvider::Error.new("Result failed validation: #{error.record.errors.full_messages.to_sentence}",
-                                               category: :schema, http_status: 200)
-      record_failure(run, schema_error, monotonic_ms - started)
+      schema_error = SearchProvider::Error.new(
+        "Result failed validation: #{error.record.errors.full_messages.to_sentence}", category: :schema, http_status: 200
+      )
+      latency = monotonic_ms - started
+      log(run, "failed", latency, schema_error)
+      Attempt.new(status: :failed, error: schema_error, latency_ms: latency)
     rescue StandardError => error
       # Never leave a run stuck in "running" if something unexpected breaks.
-      record_failure(run, SearchProvider::Error.new("Unexpected #{error.class}", category: :unknown), monotonic_ms - started)
+      @recorder.failure(run, SearchProvider::Error.new("Unexpected #{error.class}", category: :unknown), monotonic_ms - started)
       raise
     end
   end
 
-  def record_success(run, keyword, response, latency)
-    finished_at = Time.current
+  private
 
-    # A savepoint, so a failure rolls back results and snapshot even when the
-    # caller already holds a transaction.
-    SearchRun.transaction(requires_new: true) do
-      response.results.each do |result|
-        run.search_results.create!(
-          position: result.position, title: result.title, url: result.url,
-          display_domain: result.display_domain, snippet: result.snippet, extra: result.extra
-        )
-      end
-
-      if keyword.target_domain.present?
-        RankSnapshot.create!(
-          keyword: keyword, search_run: run, target_domain: keyword.target_domain,
-          rank: RankCalculator.call(results: response.results, target_domain: keyword.target_domain),
-          captured_at: finished_at
-        )
-      end
-
-      run.update!(
-        status: "succeeded", finished_at: finished_at, upstream_latency_ms: latency, http_status: 200,
-        request_metadata: run.request_metadata.merge(
-          "search_id" => response.search_id,
-          "result_count" => response.results.size,
-          "empty_results" => response.empty,
-          "skipped_results" => response.skipped_count
-        )
-      )
-    end
+  def skipped
+    Attempt.new(status: :skipped, error: nil, latency_ms: nil)
   end
 
-  def record_failure(run, error, latency)
-    # A rolled-back transaction leaves its records in the association cache, and
-    # saving the run would autosave (re-insert) them. Reload to drop that state.
-    run.reload
-    run.update!(
-      status: "failed", finished_at: Time.current, upstream_latency_ms: latency,
-      http_status: error.http_status, error_category: error.category.to_s,
-      request_metadata: run.request_metadata.merge("error_message" => error.message.first(300))
+  # Atomic claim: only one worker can move a run from queued to running.
+  def claim(run)
+    now = Time.current
+    claimed = SearchRun.where(id: run.id, status: "queued").update_all(
+      [ "status = 'running', attempts = attempts + 1, upstream_calls = upstream_calls + 1, " \
+        "started_at = COALESCE(started_at, ?), updated_at = ?", now, now ]
     )
-  end
-
-  # Enough to explain a ranking difference later: what was asked, of which provider.
-  def provenance(request)
-    {
-      "provider" => "serpapi", "engine" => request.engine, "query" => request.query,
-      "country" => request.country, "language" => request.language, "location" => request.location
-    }
+    run.reload if claimed.positive?
+    claimed.positive?
   end
 
   # Structured line for log search. The query text and credentials are deliberately omitted.
-  def log(run)
+  def log(run, outcome, latency_ms, error = nil)
     Rails.logger.info(
-      "search_run run_id=#{run.id} keyword_id=#{run.keyword_id} status=#{run.status} " \
-      "error_category=#{run.error_category || '-'} http_status=#{run.http_status || '-'} " \
-      "latency_ms=#{run.upstream_latency_ms}"
+      "search_attempt run_id=#{run.id} keyword_id=#{run.keyword_id} attempt=#{run.attempts} outcome=#{outcome} " \
+      "error_category=#{error&.category || '-'} http_status=#{error&.http_status || '-'} latency_ms=#{latency_ms}"
     )
   end
 

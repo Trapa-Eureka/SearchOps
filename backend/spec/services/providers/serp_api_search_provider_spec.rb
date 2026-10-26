@@ -79,7 +79,7 @@ RSpec.describe Providers::SerpApiSearchProvider do
     it "applies explicit open and read timeouts" do
       http = instance_double(Net::HTTP, :use_ssl= => nil, :open_timeout= => nil, :read_timeout= => nil, :write_timeout= => nil)
       allow(Net::HTTP).to receive(:new).and_return(http)
-      allow(http).to receive(:request).and_return(instance_double(Net::HTTPOK, code: "200", body: serpapi_fixture("success")))
+      allow(http).to receive(:request).and_return(instance_double(Net::HTTPOK, code: "200", body: serpapi_fixture("success"), "[]": nil))
 
       described_class.new(api_key: api_key, open_timeout: 2, read_timeout: 7).search(request)
 
@@ -345,6 +345,93 @@ RSpec.describe Providers::SerpApiSearchProvider do
       stub_request(:get, /serpapi.com/).to_raise(SocketError.new("failed to open #{api_key}"))
 
       expect(error_from { provider.search(request) }.message).not_to include(api_key)
+    end
+  end
+
+  describe "Retry-After" do
+    it "exposes a delay-in-seconds hint on rate limit errors" do
+      stub_serpapi(body: { error: "Too many requests." }.to_json, status: 429, headers: { "Retry-After" => "42" })
+
+      error = error_from { provider.search(request) }
+
+      expect(error.category).to eq(:rate_limit)
+      expect(error.retry_after).to eq(42)
+    end
+
+    it "also reads it from server errors" do
+      stub_serpapi(fixture: "server_error", status: 503, headers: { "Retry-After" => "7" })
+
+      expect(error_from { provider.search(request) }.retry_after).to eq(7)
+    end
+
+    it "ignores an HTTP-date, zero, negative, or garbage value" do
+      [ "Wed, 21 Oct 2026 07:28:00 GMT", "0", "-5", "soon", "" ].each do |value|
+        stub_serpapi(body: "{}", status: 429, headers: { "Retry-After" => value })
+
+        expect(error_from { provider.search(request) }.retry_after).to be_nil
+      end
+    end
+
+    it "is nil when the header is absent" do
+      stub_serpapi(body: "{}", status: 429)
+
+      expect(error_from { provider.search(request) }.retry_after).to be_nil
+    end
+  end
+
+  describe ".configured?" do
+    it "is true for a real-looking key", env: { "SERPAPI_API_KEY" => "abc123" } do
+      expect(described_class.configured?).to be(true)
+    end
+
+    it "is false for missing, blank, or placeholder keys" do
+      [ nil, "", "  ", "replace_me" ].each do |value|
+        ENV["SERPAPI_API_KEY"] = value
+        expect(described_class.configured?).to be(false)
+      end
+    ensure
+      ENV.delete("SERPAPI_API_KEY")
+    end
+  end
+
+  describe "#account" do
+    let(:account_url) { "https://serpapi.com/account.json" }
+    let(:account_body) do
+      { account_id: "acc-1", api_key: api_key, account_email: "me@example.com", account_status: "Active",
+        plan_name: "Free Plan", searches_per_month: 100, plan_searches_left: 80, total_searches_left: 80,
+        this_month_usage: 20, this_hour_searches: 1, last_hour_searches: 0, account_rate_limit_per_hour: 20 }.to_json
+    end
+
+    it "returns only the quota fields, never the key or e-mail" do
+      stub = stub_request(:get, account_url).with(query: { "api_key" => api_key }).to_return(status: 200, body: account_body)
+
+      result = provider.account
+
+      expect(stub).to have_been_requested.once
+      expect(result).to eq(
+        "plan_name" => "Free Plan", "searches_per_month" => 100, "plan_searches_left" => 80, "total_searches_left" => 80,
+        "this_month_usage" => 20, "this_hour_searches" => 1, "last_hour_searches" => 0, "account_rate_limit_per_hour" => 20
+      )
+      expect(result.to_json).not_to include(api_key)
+      expect(result.to_json).not_to include("me@example.com")
+    end
+
+    it "classifies an invalid key as auth" do
+      stub_request(:get, /account.json/).to_return(status: 401, body: serpapi_fixture("invalid_api_key"))
+
+      expect(error_from { provider.account }.category).to eq(:auth)
+    end
+
+    it "raises a schema error for a malformed body" do
+      stub_request(:get, /account.json/).to_return(status: 200, body: "nope")
+
+      expect(error_from { provider.account }.category).to eq(:schema)
+    end
+
+    it "maps timeouts like a search does" do
+      stub_request(:get, /account.json/).to_timeout
+
+      expect(error_from { provider.account }.category).to eq(:timeout)
     end
   end
 end

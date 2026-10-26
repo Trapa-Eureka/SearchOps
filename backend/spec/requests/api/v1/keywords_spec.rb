@@ -1,7 +1,10 @@
 require "rails_helper"
 
 RSpec.describe "Api::V1::Keywords", type: :request do
-  let(:json) { response.parsed_body }
+  # A method, not a memoized let: examples that send several requests must read the latest response.
+  def json
+    response.parsed_body
+  end
   let(:valid_params) do
     { keyword: { query: "senior react developer", country: "ph", language: "en",
                  location: "Manila", target_domain: "https://www.example.com/jobs", schedule: "daily" } }
@@ -24,7 +27,7 @@ RSpec.describe "Api::V1::Keywords", type: :request do
 
       expect(json["data"].map { |k| k["id"] }).to eq([ newer.id, older.id ])
       expect(json["data"].first.keys).to match_array(
-        %w[id query engine country language location target_domain active schedule created_at updated_at]
+        %w[id query engine country language location target_domain active schedule created_at updated_at freshness]
       )
     end
 
@@ -242,6 +245,31 @@ RSpec.describe "Api::V1::Keywords", type: :request do
       delete "/api/v1/keywords/0"
 
       expect(response).to have_http_status(:not_found)
+    end
+  end
+
+  describe "freshness" do
+    it "is no_data for a new keyword" do
+      post "/api/v1/keywords", params: valid_params, as: :json
+
+      expect(json["data"]["freshness"]).to eq(
+        "state" => "no_data", "reason" => nil, "last_success_at" => nil, "last_attempt_status" => nil, "last_attempt_at" => nil
+      )
+    end
+
+    it "reports fresh and stale states in the list and on a single keyword" do
+      fresh = create(:keyword, query: "fresh one")
+      create(:search_run, keyword: fresh)
+      stale = create(:keyword, query: "stale one")
+      create(:search_run, keyword: stale, finished_at: 2.hours.ago)
+      create(:search_run, :failed, keyword: stale, finished_at: 1.hour.ago)
+
+      get "/api/v1/keywords"
+      states = json["data"].to_h { |k| [ k["query"], k["freshness"]["state"] ] }
+      expect(states).to eq("fresh one" => "fresh", "stale one" => "stale")
+
+      get "/api/v1/keywords/#{stale.id}"
+      expect(json["data"]["freshness"]).to include("state" => "stale", "reason" => "last_attempt_failed", "last_attempt_status" => "failed")
     end
   end
 end

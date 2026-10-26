@@ -25,7 +25,8 @@ module Api
             target_domain: keyword.target_domain,
             ordering: "newest_first",
             rank_semantics: "lower_is_better",
-            null_rank_meaning: "not_found_in_retrieved_window"
+            null_rank_meaning: "not_found_in_retrieved_window",
+            freshness: KeywordSerializer.freshness_json(KeywordFreshness.for(keyword)[keyword.id])
           )
         }
       end

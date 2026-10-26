@@ -9,6 +9,8 @@ Rails.application.routes.draw do
 
   namespace :api do
     namespace :v1 do
+      get "metrics/summary", to: "metrics#summary"
+
       resources :keywords, only: %i[index show create update destroy] do
         resources :searches, only: %i[index show create]
         resource :rank_history, only: :show, controller: "rank_histories"

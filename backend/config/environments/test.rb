@@ -39,4 +39,7 @@ Rails.application.configure do
 
   # Raise error when a before_action's only/except options reference missing actions.
   config.action_controller.raise_on_missing_callback_actions = true
+
+  # Jobs are collected, not run, unless a spec asks for them (ActiveJob::TestHelper).
+  config.active_job.queue_adapter = :test
 end

@@ -1,6 +1,10 @@
 class Keyword < ApplicationRecord
   ENGINES = %w[google].freeze
   SCHEDULES = %w[manual daily weekly].freeze
+  # How often a scheduled keyword is searched again. "manual" is never scheduled.
+  SCHEDULE_INTERVALS = { "daily" => 24.hours, "weekly" => 7.days }.freeze
+  # Data older than this is flagged stale: 1.5 intervals leaves room for one missed run.
+  STALE_AFTER = SCHEDULE_INTERVALS.transform_values { |interval| interval * 1.5 }.freeze
 
   # Curated MVP subsets, not SerpApi's full lists. Verify against SerpApi's
   # supported gl/hl values before extending (Stage 3).
@@ -40,6 +44,19 @@ class Keyword < ApplicationRecord
   }, unless: -> { errors.any? }
 
   scope :active, -> { where(active: true) }
+  scope :scheduled, -> { active.where(schedule: SCHEDULE_INTERVALS.keys) }
+
+  # Scheduled keywords with no upstream search inside their interval. A failed attempt
+  # counts as an attempt (transient errors are retried by the job, not re-scheduled).
+  def self.due_for_check(now: Time.current)
+    keywords = scheduled.order(:id).to_a
+    last_attempt = SearchRun.upstream.where(keyword_id: keywords.map(&:id)).group(:keyword_id).maximum(:created_at)
+
+    keywords.select do |keyword|
+      last = last_attempt[keyword.id]
+      last.nil? || last <= now - SCHEDULE_INTERVALS.fetch(keyword.schedule)
+    end
+  end
 
   def self.max_keywords
     ENV.fetch("SEARCH_MAX_KEYWORDS", DEFAULT_MAX_KEYWORDS).to_i

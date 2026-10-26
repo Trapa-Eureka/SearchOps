@@ -1,9 +1,10 @@
 require "rails_helper"
 
-RSpec.describe SearchOrchestrator do
+RSpec.describe SearchOrchestrator, env: { "SEARCH_MAX_REQUESTS_PER_DAY" => "100" } do
   subject(:orchestrator) { described_class.new(provider: provider) }
 
   let(:keyword) { create(:keyword, query: "react developer", country: "ph", language: "en", location: "Manila", target_domain: "example.com") }
+  let(:run) { create(:search_run, :queued, keyword: keyword, request_metadata: { "provider" => "serpapi", "query" => "react developer" }) }
   let(:provider) { instance_double(Providers::SerpApiSearchProvider) }
 
   def result(position, url)
@@ -19,44 +20,46 @@ RSpec.describe SearchOrchestrator do
     [ result(1, "https://react.dev/"), result(2, "https://www.example.com/jobs"), result(3, "https://en.wikipedia.org/x") ]
   end
 
-  around do |example|
-    original = ENV["SEARCH_MAX_REQUESTS_PER_DAY"]
-    ENV["SEARCH_MAX_REQUESTS_PER_DAY"] = "100"
-    example.run
-  ensure
-    original.nil? ? ENV.delete("SEARCH_MAX_REQUESTS_PER_DAY") : ENV["SEARCH_MAX_REQUESTS_PER_DAY"] = original
-  end
-
-  describe "successful search" do
+  describe "a successful attempt" do
     before { allow(provider).to receive(:search).and_return(response(window)) }
 
-    it "records a succeeded run with timing and provenance" do
-      run = orchestrator.call(keyword)
+    it "returns a succeeded attempt and records the run with timing and counters" do
+      attempt = orchestrator.execute(run)
 
-      expect(run).to be_persisted
-      expect(run.status).to eq("succeeded")
-      expect(run.http_status).to eq(200)
-      expect(run.error_category).to be_nil
+      expect(attempt.status).to eq(:succeeded)
+      expect(attempt.error).to be_nil
+      expect(attempt.latency_ms).to be >= 0
+      run.reload
+      expect(run).to have_attributes(status: "succeeded", http_status: 200, error_category: nil, attempts: 1, upstream_calls: 1)
       expect(run.upstream_latency_ms).to be >= 0
       expect(run.started_at).to be <= run.finished_at
-      expect(run.fingerprint).to match(/\A\h{64}\z/)
-      expect(run.request_metadata).to include(
-        "provider" => "serpapi", "engine" => "google", "query" => "react developer", "country" => "ph",
-        "language" => "en", "location" => "Manila", "search_id" => "sid-1",
-        "result_count" => 3, "empty_results" => false, "skipped_results" => 0
-      )
+      expect(run.request_metadata).to include("search_id" => "sid-1", "result_count" => 3, "empty_results" => false,
+                                              "skipped_results" => 0, "query" => "react developer")
     end
 
-    it "passes a request built from the keyword to the provider" do
-      orchestrator.call(keyword)
+    it "sends a request built from the keyword" do
+      orchestrator.execute(run)
 
       expect(provider).to have_received(:search).with(
         SearchProvider::Request.new(query: "react developer", engine: "google", country: "ph", language: "en", location: "Manila")
       )
     end
 
+    it "marks the run running while the provider is being called" do
+      observed = nil
+      allow(provider).to receive(:search) do
+        observed = SearchRun.find(run.id).slice(:status, :attempts, :upstream_calls, :started_at).symbolize_keys
+        response(window)
+      end
+
+      orchestrator.execute(run)
+
+      expect(observed).to include(status: "running", attempts: 1, upstream_calls: 1)
+      expect(observed[:started_at]).to be_present
+    end
+
     it "stores the normalized results in order" do
-      run = orchestrator.call(keyword)
+      orchestrator.execute(run)
 
       expect(run.search_results.order(:position).pluck(:position, :url)).to eq([
         [ 1, "https://react.dev/" ], [ 2, "https://www.example.com/jobs" ], [ 3, "https://en.wikipedia.org/x" ]
@@ -64,40 +67,38 @@ RSpec.describe SearchOrchestrator do
     end
 
     it "stores a rank snapshot for the target domain" do
-      run = orchestrator.call(keyword)
+      orchestrator.execute(run)
 
-      snapshot = run.rank_snapshot
-      expect(snapshot.keyword).to eq(keyword)
-      expect(snapshot.target_domain).to eq("example.com")
-      expect(snapshot.rank).to eq(2)
+      snapshot = run.reload.rank_snapshot
+      expect(snapshot).to have_attributes(keyword: keyword, target_domain: "example.com", rank: 2)
       expect(snapshot.captured_at).to eq(run.finished_at)
     end
 
     it "stores a null rank when the target is not in the window" do
       keyword.update!(target_domain: "absent.org")
 
-      run = orchestrator.call(keyword)
+      orchestrator.execute(run)
 
-      expect(run.rank_snapshot.rank).to be_nil
-      expect(run.rank_snapshot.found?).to be(false)
+      expect(run.reload.rank_snapshot.rank).to be_nil
     end
 
     it "stores no snapshot when the keyword has no target domain" do
       keyword.update!(target_domain: nil)
 
-      run = orchestrator.call(keyword)
+      orchestrator.execute(run)
 
-      expect(run.rank_snapshot).to be_nil
+      expect(run.reload.rank_snapshot).to be_nil
       expect(run.search_results.count).to eq(3)
     end
   end
 
-  describe "empty result" do
-    before { allow(provider).to receive(:search).and_return(response([], search_id: "sid-empty")) }
-
+  describe "an empty result" do
     it "is a succeeded run with zero results and a null rank" do
-      run = orchestrator.call(keyword)
+      allow(provider).to receive(:search).and_return(response([], search_id: "sid-empty"))
 
+      orchestrator.execute(run)
+
+      run.reload
       expect(run.status).to eq("succeeded")
       expect(run.search_results.count).to eq(0)
       expect(run.request_metadata).to include("result_count" => 0, "empty_results" => true)
@@ -105,100 +106,130 @@ RSpec.describe SearchOrchestrator do
     end
   end
 
-  describe "provider failures" do
-    {
-      timeout: [ nil, true ], network: [ nil, true ], upstream: [ 503, true ],
-      rate_limit: [ 429, true ], quota: [ 429, false ], auth: [ 401, false ],
-      invalid_request: [ 400, false ], schema: [ 200, false ], unknown: [ 200, false ]
-    }.each do |category, (http_status, _retryable)|
-      it "records a failed run for #{category} errors without raising" do
-        allow(provider).to receive(:search)
-          .and_raise(SearchProvider::Error.new("boom (#{category})", category: category, http_status: http_status))
+  describe "a provider failure" do
+    let(:error) { SearchProvider::Error.new("SerpApi returned HTTP 503", category: :upstream, http_status: 503) }
 
-        run = nil
-        expect { run = orchestrator.call(keyword) }.not_to raise_error
+    before { allow(provider).to receive(:search).and_raise(error) }
 
-        expect(run.status).to eq("failed")
-        expect(run.error_category).to eq(category.to_s)
-        expect(run.http_status).to eq(http_status)
-        expect(run.finished_at).to be_present
-        expect(run.upstream_latency_ms).to be >= 0
-        expect(run.request_metadata["error_message"]).to eq("boom (#{category})")
-        expect(run.search_results.count).to eq(0)
-        expect(run.rank_snapshot).to be_nil
-      end
-    end
+    it "returns the error without deciding the outcome: the job chooses retry or give up" do
+      attempt = orchestrator.execute(run)
 
-    it "keeps earlier successful data when a later search fails" do
-      allow(provider).to receive(:search).and_return(response(window))
-      good = orchestrator.call(keyword)
-
-      allow(provider).to receive(:search).and_raise(SearchProvider::Error.new("down", category: :upstream, http_status: 503))
-      bad = orchestrator.call(keyword)
-
-      expect(bad.status).to eq("failed")
-      expect(good.reload.status).to eq("succeeded")
-      expect(good.search_results.count).to eq(3)
-      expect(good.rank_snapshot.rank).to eq(2)
-      expect(keyword.rank_snapshots.count).to eq(1)
-    end
-
-    it "marks provider output rejected by our validations as a schema failure and stores nothing partial" do
-      too_long = result(1, "https://a.example.com/").with(url: "https://a.example.com/#{'x' * 3000}")
-      allow(provider).to receive(:search).and_return(response([ window.first, too_long ]))
-
-      run = orchestrator.call(keyword)
-
-      expect(run.status).to eq("failed")
-      expect(run.error_category).to eq("schema")
+      expect(attempt).to have_attributes(status: :failed, error: error)
+      expect(attempt.latency_ms).to be >= 0
+      expect(run.reload).to have_attributes(status: "running", attempts: 1, upstream_calls: 1, finished_at: nil)
       expect(run.search_results.count).to eq(0)
       expect(run.rank_snapshot).to be_nil
     end
+  end
 
-    it "never leaves a run in 'running' when something unexpected breaks, and re-raises" do
+  describe "provider output that fails our validation" do
+    it "returns a schema error and stores nothing partial" do
+      too_long = result(1, "https://a.example.com/").with(url: "https://a.example.com/#{'x' * 3000}")
+      allow(provider).to receive(:search).and_return(response([ window.first, too_long ]))
+
+      attempt = orchestrator.execute(run)
+
+      expect(attempt.status).to eq(:failed)
+      expect(attempt.error.category).to eq(:schema)
+      expect(attempt.error.retryable?).to be(false)
+      expect(run.search_results.count).to eq(0)
+      expect(run.reload.rank_snapshot).to be_nil
+      expect(run.status).to eq("running")
+    end
+  end
+
+  describe "an unexpected exception" do
+    it "closes the run as failed (never stuck in running) and re-raises" do
       allow(provider).to receive(:search).and_raise(NoMethodError, "bug")
 
-      expect { orchestrator.call(keyword) }.to raise_error(NoMethodError)
+      expect { orchestrator.execute(run) }.to raise_error(NoMethodError)
 
-      run = keyword.search_runs.last
-      expect(run.status).to eq("failed")
-      expect(run.error_category).to eq("unknown")
+      expect(run.reload).to have_attributes(status: "failed", error_category: "unknown")
       expect(run.finished_at).to be_present
     end
   end
 
-  describe "budget" do
-    it "refuses to search, creates no run, and never calls the provider once the budget is spent" do
-      ENV["SEARCH_MAX_REQUESTS_PER_DAY"] = "1"
-      create(:search_run)
+  describe "claiming" do
+    before { allow(provider).to receive(:search).and_return(response(window)) }
+
+    it "skips a run that is not queued and never calls the provider" do
+      %w[running succeeded failed].each do |status|
+        other = create(:search_run, keyword: keyword, status: status, fingerprint: "fp-#{status}")
+
+        expect(orchestrator.execute(other).status).to eq(:skipped)
+      end
+      expect(provider).not_to have_received(:search)
+    end
+
+    it "lets only one of two executions of the same run reach the provider" do
+      stale_copy = SearchRun.find(run.id)
+
+      first = orchestrator.execute(run)
+      second = orchestrator.execute(stale_copy)
+
+      expect([ first.status, second.status ]).to eq(%i[succeeded skipped])
+      expect(provider).to have_received(:search).once
+      expect(run.reload.upstream_calls).to eq(1)
+    end
+
+    it "loses the claim cleanly if another worker takes the run between the check and the update" do
+      allow(run).to receive(:reload).and_wrap_original do |original, *args|
+        original.call(*args).tap { SearchRun.where(id: run.id).update_all(status: "running") }
+      end
+
+      expect(orchestrator.execute(run).status).to eq(:skipped)
+      expect(provider).not_to have_received(:search)
+    end
+
+    it "counts every attempt of a retried run" do
+      allow(provider).to receive(:search).and_raise(SearchProvider::Error.new("x", category: :timeout))
+
+      orchestrator.execute(run)
+      run.update!(status: "queued")
+      orchestrator.execute(run)
+
+      expect(run.reload).to have_attributes(attempts: 2, upstream_calls: 2)
+    end
+  end
+
+  describe "the budget" do
+    it "raises before claiming or calling the provider when the budget is spent", env: { "SEARCH_MAX_REQUESTS_PER_DAY" => "1" } do
+      create(:search_run, upstream_calls: 1)
       allow(provider).to receive(:search)
 
-      expect { orchestrator.call(keyword) }.to raise_error(SearchBudget::Exceeded)
+      expect { orchestrator.execute(run) }.to raise_error(SearchBudget::Exceeded)
 
       expect(provider).not_to have_received(:search)
-      expect(keyword.search_runs.count).to eq(0)
+      expect(run.reload).to have_attributes(status: "queued", attempts: 0, upstream_calls: 0)
+    end
+
+    it "does not count the run's own reservation against itself", env: { "SEARCH_MAX_REQUESTS_PER_DAY" => "1" } do
+      allow(provider).to receive(:search).and_return(response(window))
+
+      expect(orchestrator.execute(run).status).to eq(:succeeded)
     end
   end
 
   describe "logging" do
-    before { allow(provider).to receive(:search).and_return(response(window)) }
-
-    it "logs run id, status, and latency but not the query text" do
+    before do
+      allow(provider).to receive(:search).and_return(response(window))
       allow(Rails.logger).to receive(:info)
+    end
 
-      run = orchestrator.call(keyword)
+    it "logs run id, outcome, and latency but not the query text" do
+      orchestrator.execute(run)
 
-      expect(Rails.logger).to have_received(:info).with(a_string_matching(/search_run run_id=#{run.id} .*status=succeeded .*latency_ms=\d+/))
+      expect(Rails.logger).to have_received(:info)
+        .with(a_string_matching(/search_attempt run_id=#{run.id} keyword_id=\d+ attempt=1 outcome=succeeded .*latency_ms=\d+/))
       expect(Rails.logger).not_to have_received(:info).with(a_string_including("react developer"))
     end
 
     it "logs the error category for failures" do
       allow(provider).to receive(:search).and_raise(SearchProvider::Error.new("x", category: :timeout))
-      allow(Rails.logger).to receive(:info)
 
-      orchestrator.call(keyword)
+      orchestrator.execute(run)
 
-      expect(Rails.logger).to have_received(:info).with(a_string_matching(/status=failed error_category=timeout/))
+      expect(Rails.logger).to have_received(:info).with(a_string_matching(/outcome=failed error_category=timeout/))
     end
   end
 end

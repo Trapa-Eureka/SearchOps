@@ -1,7 +1,10 @@
 require "rails_helper"
 
 RSpec.describe "Api::V1::RankHistories", type: :request do
-  let(:json) { response.parsed_body }
+  # A method, not a memoized let: examples that send several requests must read the latest response.
+  def json
+    response.parsed_body
+  end
   let(:keyword) { create(:keyword, target_domain: "example.com") }
 
   def snapshot(rank:, at:, fingerprint: "fp-1", target: "example.com")
@@ -115,23 +118,37 @@ RSpec.describe "Api::V1::RankHistories", type: :request do
   end
 
   describe "full flow with the real search endpoint",
-           env: { "SERPAPI_API_KEY" => "flow-spec-key-123456", "SEARCH_MAX_REQUESTS_PER_DAY" => "50" } do
+           env: { "SERPAPI_API_KEY" => "flow-spec-key-123456", "SEARCH_MAX_REQUESTS_PER_DAY" => "50", "SEARCH_CACHE_TTL_SECONDS" => "3600" } do
+    include ActiveJob::TestHelper
+
     it "tracks a rank change between two searches" do
       stub_serpapi(fixture: "success") # example.com at position 2
-      post "/api/v1/keywords/#{keyword.id}/searches"
-      expect(response).to have_http_status(:created)
+      perform_enqueued_jobs { post "/api/v1/keywords/#{keyword.id}/searches" }
+      expect(response).to have_http_status(:accepted)
 
       moved_up = JSON.parse(serpapi_fixture("success"))
       moved_up["organic_results"] = moved_up["organic_results"].rotate(1).each_with_index.map { |r, i| r.merge("position" => i + 1) }
       # rotate(1) moves the example.com result (position 2) to position 1
       stub_serpapi(body: moved_up.to_json)
-      post "/api/v1/keywords/#{keyword.id}/searches"
-      expect(response).to have_http_status(:created)
+      perform_enqueued_jobs { post "/api/v1/keywords/#{keyword.id}/searches", params: { refresh: "true" } }
+      expect(response).to have_http_status(:accepted)
 
       get "/api/v1/keywords/#{keyword.id}/rank_history"
 
       expect(json["data"].map { |s| [ s["rank"], s["comparison"]["status"], s["comparison"]["delta"] ] })
         .to eq([ [ 1, "improved", 1 ], [ 2, "baseline", nil ] ])
+      expect(json["meta"]["freshness"]).to include("state" => "fresh")
+    end
+
+    it "does not add a snapshot when the second search is served from the cache" do
+      stub_serpapi(fixture: "success")
+      perform_enqueued_jobs { post "/api/v1/keywords/#{keyword.id}/searches" }
+      post "/api/v1/keywords/#{keyword.id}/searches"
+      expect(response).to have_http_status(:ok)
+
+      get "/api/v1/keywords/#{keyword.id}/rank_history"
+
+      expect(json["data"].size).to eq(1)
     end
   end
 end

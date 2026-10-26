@@ -15,3 +15,14 @@ RSpec.configure do |config|
     end
   end
 end
+
+# The :test Active Job adapter keeps enqueued jobs in memory across examples. Start each clean.
+RSpec.configure do |config|
+  config.before do
+    adapter = ActiveJob::Base.queue_adapter
+    if adapter.respond_to?(:enqueued_jobs)
+      adapter.enqueued_jobs.clear
+      adapter.performed_jobs.clear
+    end
+  end
+end

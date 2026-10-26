@@ -7,30 +7,33 @@ module Api
       rescue_from SearchBudget::Exceeded, with: :render_budget_exceeded
 
       def index
-        scope = @keyword.search_runs.includes(:rank_snapshot).order(created_at: :desc, id: :desc)
+        scope = @keyword.search_runs.includes(:rank_snapshot, :source_run).order(created_at: :desc, id: :desc)
         runs, meta = paginate(scope)
 
         render json: { data: runs.map { |run| SearchRunSerializer.call(run) }, meta: meta }
       end
 
       def show
-        run = @keyword.search_runs.includes(:rank_snapshot, :search_results).find(params[:id])
+        run = @keyword.search_runs.includes(:rank_snapshot, :search_results, source_run: %i[rank_snapshot search_results]).find(params[:id])
 
         render json: { data: SearchRunSerializer.call(run, include_results: true) }
       end
 
-      # Runs the search synchronously. Stage 4 moves this into a background job.
+      # Does not call SerpApi in the request. Outcomes (meta.outcome):
+      #   cache_hit     200  answered from a recent run, results included
+      #   enqueued      202  queued for a worker, poll GET .../searches/:id
+      #   deduplicated  202  an identical run is already queued or running, returned as is
+      # ?refresh=true skips the cache (still deduplicated and counted against the budget).
       def create
-        orchestrator = SearchOrchestrator.new(provider: Providers::SerpApiSearchProvider.from_env)
-        run = orchestrator.call(@keyword)
+        raise SearchProvider::NotConfigured, "SERPAPI_API_KEY is not configured" unless Providers::SerpApiSearchProvider.configured?
 
-        if run.status == "succeeded"
-          render json: { data: SearchRunSerializer.call(run, include_results: true) }, status: :created,
-                 location: api_v1_keyword_search_path(@keyword, run)
-        else
-          render_error(failure_status(run.error_category), "search_failed", "Search failed",
-                       { category: run.error_category, run_id: run.id })
-        end
+        result = SearchEnqueuer.new.call(@keyword, refresh: refresh?)
+        run = result.run
+        done = run.status == "succeeded"
+
+        render json: { data: SearchRunSerializer.call(run, include_results: done), meta: { outcome: result.outcome } },
+               status: result.outcome == :cache_hit ? :ok : :accepted,
+               location: api_v1_keyword_search_path(@keyword, run)
       end
 
       private
@@ -39,13 +42,8 @@ module Api
         @keyword = Keyword.find(params[:keyword_id])
       end
 
-      # The run is stored either way; the HTTP status tells monitors what kind of failure it was.
-      def failure_status(category)
-        case category
-        when "timeout" then :gateway_timeout
-        when "quota", "rate_limit" then :too_many_requests
-        else :bad_gateway
-        end
+      def refresh?
+        ActiveModel::Type::Boolean.new.cast(params[:refresh]) == true
       end
 
       def render_not_configured(_error)

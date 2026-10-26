@@ -15,6 +15,34 @@ FactoryBot.define do
     fingerprint { SecureRandom.hex(16) }
     status { "succeeded" }
     cache_source { "none" }
+    finished_at { Time.current }
+    upstream_calls { 1 }
+    attempts { 1 }
+
+    trait :queued do
+      status { "queued" }
+      finished_at { nil }
+      upstream_calls { 0 }
+      attempts { 0 }
+    end
+
+    trait :running do
+      status { "running" }
+      finished_at { nil }
+      started_at { Time.current }
+    end
+
+    trait :failed do
+      status { "failed" }
+      error_category { "upstream" }
+    end
+
+    trait :cache_hit do
+      cache_source { "app" }
+      upstream_calls { 0 }
+      attempts { 0 }
+      source_run { association :search_run, keyword: keyword }
+    end
   end
 
   factory :search_result do

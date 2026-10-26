@@ -20,12 +20,14 @@ module SearchProvider
   class Error < StandardError
     RETRYABLE_CATEGORIES = %i[network timeout rate_limit upstream].freeze
 
-    attr_reader :category, :http_status
+    attr_reader :category, :http_status, :retry_after
 
-    def initialize(message, category:, http_status: nil)
+    # retry_after is the server's hint in seconds (Retry-After header), when it sent one.
+    def initialize(message, category:, http_status: nil, retry_after: nil)
       super(message)
       @category = category
       @http_status = http_status
+      @retry_after = retry_after
     end
 
     # Auth, quota, invalid requests, schema problems, and unknown errors are never retried.

@@ -213,4 +213,54 @@ RSpec.describe Keyword, type: :model do
         .and change(RankSnapshot, :count).by(-1)
     end
   end
+
+  describe ".due_for_check" do
+    it "lists only active scheduled keywords that were not searched within their interval" do
+      due_daily = create(:keyword, schedule: "daily")
+      due_weekly = create(:keyword, schedule: "weekly")
+      recent = create(:keyword, schedule: "daily")
+      create(:search_run, keyword: recent, created_at: 2.hours.ago)
+      create(:keyword, schedule: "manual")
+      create(:keyword, schedule: "daily", active: false)
+
+      expect(described_class.due_for_check).to contain_exactly(due_daily, due_weekly)
+    end
+
+    it "uses each schedule's own interval" do
+      daily = create(:keyword, schedule: "daily")
+      weekly = create(:keyword, schedule: "weekly")
+      create(:search_run, keyword: daily, created_at: 23.hours.ago)
+      create(:search_run, keyword: weekly, created_at: 6.days.ago)
+      expect(described_class.due_for_check).to be_empty
+
+      # daily: last run 23h ago, due after 1 more hour. weekly: last run 6 days ago, due after 1 more day.
+      travel_to(2.hours.from_now) { expect(described_class.due_for_check).to contain_exactly(daily) }
+      travel_to(25.hours.from_now) { expect(described_class.due_for_check).to contain_exactly(daily, weekly) }
+    end
+
+    it "counts a failed attempt as an attempt, so a failing keyword is not hammered" do
+      keyword = create(:keyword, schedule: "daily")
+      create(:search_run, :failed, keyword: keyword, created_at: 1.hour.ago)
+
+      expect(described_class.due_for_check).to be_empty
+    end
+
+    it "does not count a cache hit as a check" do
+      keyword = create(:keyword, schedule: "daily")
+      old = create(:search_run, keyword: keyword, created_at: 30.hours.ago)
+      create(:search_run, :cache_hit, keyword: keyword, source_run: old, created_at: 1.minute.ago)
+
+      expect(described_class.due_for_check).to contain_exactly(keyword)
+    end
+
+    it "uses a fixed number of queries" do
+      create_list(:keyword, 4, schedule: "daily")
+
+      queries = []
+      callback = ->(*, payload) { queries << payload[:sql] unless payload[:name] == "SCHEMA" }
+      ActiveSupport::Notifications.subscribed(callback, "sql.active_record") { described_class.due_for_check }
+
+      expect(queries.size).to eq(2)
+    end
+  end
 end
