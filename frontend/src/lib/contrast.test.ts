@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 const css = readFileSync(resolve(process.cwd(), "src/app/globals.css"), "utf8");
 
 function tokens(block: string): Record<string, string> {
-  return Object.fromEntries([...block.matchAll(/--([a-z-]+):\s*(#[0-9a-fA-F]{6})\s*;/g)].map((match) => [match[1], match[2]]));
+  return Object.fromEntries([...block.matchAll(/--([a-z0-9-]+):\s*(#[0-9a-fA-F]{6})\s*;/g)].map((match) => [match[1], match[2]]));
 }
 
 const rootBlock = css.match(/:root\s*{([^}]*)}/)?.[1] ?? "";
@@ -26,10 +26,16 @@ const ratio = (a: string, b: string) => {
 
 // [text token, background token]
 const PAIRS: [string, string][] = [
-  ["text", "bg"], ["text", "surface"], ["muted", "bg"], ["muted", "surface"],
+  ["text", "bg"], ["text", "surface"], ["text", "surface-2"], ["muted", "bg"], ["muted", "surface"], ["muted", "surface-2"],
   ["accent", "surface"], ["accent", "bg"], ["accent-contrast", "accent"], ["accent-contrast", "accent-hover"],
   ["ok", "ok-bg"], ["warn", "warn-bg"], ["danger", "danger-bg"], ["info", "info-bg"],
   ["ok", "surface"], ["warn", "surface"], ["danger", "surface"], ["info", "surface"],
+  ["ok", "bg"], ["warn", "bg"], ["danger", "bg"], // the navigation badges sit on the page background
+];
+
+// Parts of controls and chart marks that carry meaning must stand out from the surface by 3:1 (WCAG 1.4.11).
+const GRAPHICS: [string, string][] = [
+  ["border-strong", "surface"], ["c-success", "surface"], ["c-cache", "surface"], ["c-failed", "surface"], ["c-active", "surface"],
 ];
 
 describe("colour tokens", () => {
@@ -47,6 +53,22 @@ describe("colour tokens", () => {
       });
     }
   }
+
+  for (const [name, theme] of [["light", light], ["dark", dark]] as const) {
+    for (const [mark, background] of GRAPHICS) {
+      it(`${name}: ${mark} stands out from ${background} by at least 3:1`, () => {
+        expect(theme[mark], `missing token ${mark}`).toBeDefined();
+        expect(ratio(theme[mark], theme[background])).toBeGreaterThanOrEqual(3);
+      });
+    }
+  }
+
+  it("keeps the four chart colours distinguishable from each other, in both themes", () => {
+    for (const theme of [light, dark]) {
+      const colours = ["c-success", "c-cache", "c-failed", "c-active"].map((name) => theme[name]);
+      expect(new Set(colours).size).toBe(4);
+    }
+  });
 
   it("white text on the danger button is readable (light theme)", () => {
     expect(ratio("#ffffff", light.danger)).toBeGreaterThanOrEqual(4.5);

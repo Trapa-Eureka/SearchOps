@@ -3,18 +3,20 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { FreshnessBadge } from "@/components/badges";
+import { FreshnessBadge, RankChange, RankValue } from "@/components/badges";
+import { KeywordSwitcher } from "@/components/keyword-switcher";
 import { KeywordForm, valuesFromKeyword } from "@/components/keyword-form";
 import { useLocale } from "@/components/locale";
 import { RankChart } from "@/components/rank-chart";
+import { RunStrip } from "@/components/run-strip";
 import { RankTable, ResultsTable, RunsTable } from "@/components/tables";
 import { useToast } from "@/components/toast";
-import { Badge, Button, Card, ConfirmDialog, EmptyState, ErrorState, Loading, PageTitle, Pagination } from "@/components/ui";
+import { Badge, Button, Card, ConfirmDialog, EmptyState, ErrorState, Loading, Metric, PageTitle, Pagination } from "@/components/ui";
 import { useStartSearch } from "@/hooks/actions";
-import { useKeyword, useKeywordRuns, useOptions, useRankHistory, useRevalidateAll, useRun } from "@/hooks/api";
+import { useKeyword, useKeywordRuns, useKeywords, useOptions, useRankHistory, useRevalidateAll, useRun } from "@/hooks/api";
 import { api, ApiError } from "@/lib/api";
 import { describeError } from "@/lib/errors";
-import { countryName, formatDateTime, languageName } from "@/lib/format";
+import { countryName, formatDateTime, formatMs, formatRelative, languageName } from "@/lib/format";
 import type { KeywordInput, Run } from "@/lib/types";
 import type { MessageKey } from "@/lib/i18n";
 
@@ -30,7 +32,7 @@ function ResultsPanel({ keywordId, runId, targetDomain }: { keywordId: number; r
     : null;
 
   return (
-    <Card title={t("results.title")}>
+    <Card icon="search" title={t("results.title")}>
       {run.error && <ErrorState error={run.error} onRetry={() => run.mutate()} />}
       {!detail && !run.error && <Loading />}
       {detail && (
@@ -41,7 +43,7 @@ function ResultsPanel({ keywordId, runId, targetDomain }: { keywordId: number; r
               <dt className="text-muted">{t("results.source")}</dt>
               <dd>{detail.cache.hit ? t("results.sourceCache", { id: detail.cache.source_run_id ?? "?" }) : t("results.sourceLive")}</dd>
             </div>
-            <div className="flex gap-2"><dt className="text-muted">{t("results.engine")}</dt><dd>{detail.request.engine ?? "google"} · {(detail.request.country ?? "").toUpperCase()} · {detail.request.language}</dd></div>
+            <div className="flex gap-2"><dt className="text-muted">{t("results.engine")}</dt><dd>{[detail.request.engine ?? "google", detail.request.country?.toUpperCase(), detail.request.language].filter(Boolean).join(" · ")}</dd></div>
             {detail.rank && (
               <div className="flex gap-2">
                 <dt className="text-muted">{t("results.targetRank")}</dt>
@@ -75,6 +77,7 @@ export function KeywordDetailView({ id }: { id: number }) {
 
   const options = useOptions();
   const keyword = useKeyword(id);
+  const siblings = useKeywords(1, 100);
   const history = useRankHistory(id);
   const runs = useKeywordRuns(id, runPage);
 
@@ -120,9 +123,24 @@ export function KeywordDetailView({ id }: { id: number }) {
   return (
     <>
       <p className="mb-2 text-sm"><Link href="/keywords" className="text-accent underline-offset-2 hover:underline">← {t("detail.back")}</Link></p>
-      <PageTitle title={kw.query}>
+      <PageTitle title={kw.query} description={`${countryName(kw.country, locale)} · ${languageName(kw.language, locale)}${kw.location ? ` · ${kw.location}` : ""}`}>
         <FreshnessBadge freshness={kw.freshness ?? history.data?.meta.freshness} withTime />
       </PageTitle>
+
+      <KeywordSwitcher keywords={siblings.data?.data ?? []} currentId={id} />
+
+      <dl className="mb-5 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <Metric icon="star" iconTone="ok" label={t("keywordsTable.rank")}
+          value={kw.target_domain && kw.activity?.rank ? <RankValue rank={kw.activity.rank.rank} /> : "—"}
+          hint={kw.target_domain ? <>{kw.target_domain}{kw.activity?.rank && <> · <RankChange comparison={kw.activity.rank.comparison} /></>}</> : t("keywordsTable.noTarget")} />
+        <Metric icon="gauge" label={t("keywordsTable.p95")}
+          value={kw.activity && kw.activity.latency_ms.p95 !== null ? formatMs(kw.activity.latency_ms.p95, locale) : "—"}
+          hint={kw.activity ? t("keywordsTable.p95Hint", { count: kw.activity.latency_ms.samples }) : undefined} />
+        <Metric icon="clock" iconTone="warn" label={t("detail.lastGood")}
+          value={kw.freshness?.last_success_at ? formatRelative(kw.freshness.last_success_at, locale) : "—"}
+          hint={kw.freshness?.last_success_at ? formatDateTime(kw.freshness.last_success_at, locale) : t("freshness.noData")} />
+        <Metric icon="pulse" label={t("keywordsTable.recent")} value={<RunStrip runs={kw.activity?.recent_runs ?? []} />} />
+      </dl>
 
       <Card className="mb-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -130,13 +148,13 @@ export function KeywordDetailView({ id }: { id: number }) {
             <div className="flex gap-2"><dt className="text-muted">{t("detail.market")}</dt><dd>{countryName(kw.country, locale)} · {languageName(kw.language, locale)}{kw.location ? ` · ${kw.location}` : ""}</dd></div>
             <div className="flex gap-2"><dt className="text-muted">{t("detail.target")}</dt><dd>{kw.target_domain ?? t("keywordsTable.noTarget")}</dd></div>
             <div className="flex gap-2"><dt className="text-muted">{t("detail.schedule")}</dt><dd>{t(`schedule.${kw.schedule}` as MessageKey)}</dd></div>
-            <div className="flex gap-2"><dt className="text-muted">{t("detail.status")}</dt><dd>{kw.active ? <Badge tone="ok" icon="●">{t("detail.active")}</Badge> : <Badge icon="⏸">{t("keywordsTable.paused")}</Badge>}</dd></div>
+            <div className="flex gap-2"><dt className="text-muted">{t("detail.status")}</dt><dd>{kw.active ? <Badge tone="ok" icon="check">{t("detail.active")}</Badge> : <Badge icon="pause">{t("keywordsTable.paused")}</Badge>}</dd></div>
           </dl>
           <div className="flex flex-col items-start gap-2 sm:items-end">
             <div className="flex flex-wrap gap-2">
-              <Button variant="primary" onClick={runSearch} disabled={busy}>{t("keyword.searchNow")}</Button>
-              <Button onClick={() => setEditing(!editing)} aria-expanded={editing}>{t("detail.edit")}</Button>
-              <Button variant="danger" onClick={() => setConfirmDelete(true)}>{t("detail.delete")}</Button>
+              <Button variant="primary" icon="refresh" onClick={runSearch} disabled={busy}>{t("keyword.searchNow")}</Button>
+              <Button icon="pencil" onClick={() => setEditing(!editing)} aria-expanded={editing}>{t("detail.edit")}</Button>
+              <Button variant="danger" icon="trash" onClick={() => setConfirmDelete(true)}>{t("detail.delete")}</Button>
             </div>
             <label className="flex items-center gap-2 text-xs text-muted">
               <input type="checkbox" className="size-4 accent-accent" checked={refresh} onChange={(event) => setRefresh(event.target.checked)} />
@@ -152,7 +170,7 @@ export function KeywordDetailView({ id }: { id: number }) {
       </Card>
 
       <div className="grid grid-cols-1 gap-5">
-        <Card title={t("rank.title")}>
+        <Card icon="star" title={t("rank.title")} description={t("rankTable.hint")}>
           {history.error && <ErrorState error={history.error} onRetry={() => history.mutate()} />}
           {!history.data && !history.error && <Loading />}
           {history.data && !kw.target_domain && (
@@ -162,14 +180,14 @@ export function KeywordDetailView({ id }: { id: number }) {
             <EmptyState title={t("rank.emptyTitle")}>{t("rank.emptyBody", { domain: kw.target_domain })}</EmptyState>
           )}
           {history.data && kw.target_domain && entries.length > 0 && (
-            <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+            <div className="grid grid-cols-1 gap-6">
               <RankChart entries={entries} targetDomain={kw.target_domain} />
               <RankTable entries={entries} />
             </div>
           )}
         </Card>
 
-        <Card title={t("runs.title")}>
+        <Card icon="pulse" title={t("runs.title")}>
           {runs.error && <ErrorState error={runs.error} onRetry={() => runs.mutate()} />}
           {!runs.data && !runs.error && <Loading />}
           {runs.data && runList.length === 0 && <EmptyState title={t("runs.emptyTitle")}>{t("runs.emptyBody")}</EmptyState>}

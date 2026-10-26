@@ -10,7 +10,8 @@ module Api
         keywords, meta = paginate(scope)
         keywords = keywords.to_a
         freshness = KeywordFreshness.for(keywords)
-        render json: { data: keywords.map { |keyword| KeywordSerializer.call(keyword, freshness[keyword.id]) }, meta: meta }
+        activity = KeywordActivity.for(keywords)
+        render json: { data: keywords.map { |keyword| KeywordSerializer.call(keyword, freshness[keyword.id], activity[keyword.id]) }, meta: meta }
       end
 
       def show
@@ -44,7 +45,7 @@ module Api
       private
 
       def serialize(keyword)
-        KeywordSerializer.call(keyword, KeywordFreshness.for(keyword)[keyword.id])
+        KeywordSerializer.call(keyword, KeywordFreshness.for(keyword)[keyword.id], KeywordActivity.for(keyword)[keyword.id])
       end
 
       def set_keyword

@@ -43,7 +43,7 @@ export function PlannerView() {
     <>
       <PageTitle title={t("planner.title")}>
         {enabled !== undefined && (
-          <Badge tone={enabled ? "ok" : "neutral"} icon={enabled ? "●" : "○"}>{enabled ? t("planner.on") : t("planner.off")}</Badge>
+          <Badge tone={enabled ? "ok" : "neutral"} icon={enabled ? "check" : "circle"}>{enabled ? t("planner.on") : t("planner.off")}</Badge>
         )}
       </PageTitle>
       <p className="mb-4 max-w-3xl text-sm text-muted">{t("planner.intro")}</p>

@@ -10,7 +10,24 @@ RSpec.describe "Api::V1::Runs", type: :request do
 
     expect(response).to have_http_status(:ok)
     expect(json["data"]).to eq([])
-    expect(json["meta"]).to eq("page" => 1, "per_page" => 25, "total_count" => 0, "total_pages" => 0)
+    expect(json["meta"]).to eq(
+      "page" => 1, "per_page" => 25, "total_count" => 0, "total_pages" => 0,
+      "counts" => { "queued" => 0, "running" => 0, "succeeded" => 0, "failed" => 0, "all" => 0 }
+    )
+  end
+
+  it "counts runs per status, unaffected by the status filter, so tabs can show their totals" do
+    keyword = create(:keyword)
+    create_list(:search_run, 3, keyword: keyword)
+    create(:search_run, :failed, keyword: keyword)
+    create(:search_run, :queued, keyword: keyword)
+    create(:search_run, :failed, keyword: create(:keyword))
+
+    get "/api/v1/searches", params: { status: "failed", keyword_id: keyword.id }
+
+    expect(json["data"].size).to eq(1)
+    expect(json["meta"]["total_count"]).to eq(1)
+    expect(json["meta"]["counts"]).to eq("queued" => 1, "running" => 0, "succeeded" => 3, "failed" => 1, "all" => 5)
   end
 
   it "lists runs of all keywords newest first, with their keyword and without result bodies" do
@@ -45,7 +62,7 @@ RSpec.describe "Api::V1::Runs", type: :request do
     get "/api/v1/searches", params: { page: 2, per_page: 2 }
 
     expect(json["data"].size).to eq(2)
-    expect(json["meta"]).to eq("page" => 2, "per_page" => 2, "total_count" => 5, "total_pages" => 3)
+    expect(json["meta"]).to include("page" => 2, "per_page" => 2, "total_count" => 5, "total_pages" => 3)
   end
 
   it "filters by status, error category, and keyword" do

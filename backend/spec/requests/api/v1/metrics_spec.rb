@@ -15,13 +15,26 @@ RSpec.describe "Api::V1::Metrics", type: :request, env: { "SEARCH_MAX_REQUESTS_P
 
       expect(response).to have_http_status(:ok)
       data = json["data"]
-      expect(data.keys).to match_array(%w[window requests upstream cache errors budget keywords queue intent])
+      expect(data.keys).to match_array(%w[window requests series upstream cache errors budget keywords queue intent])
       expect(data["window"]["name"]).to eq("24h")
       expect(data["requests"]["total"]).to eq(3)
       expect(data["errors"]).to eq("timeout" => 1)
       expect(data["cache"]).to include("hits" => 1, "misses" => 2)
       expect(data["upstream"]["latency_ms"]).to include("samples" => 2, "max" => 15_000)
       expect(data["budget"]).to include("daily_limit" => 20)
+    end
+
+    it "includes a time series whose slices add up to the request total" do
+      create(:search_run, created_at: 30.minutes.ago)
+      create(:search_run, :failed, created_at: 2.hours.ago)
+
+      get "/api/v1/metrics/summary"
+
+      series = json["data"]["series"]
+      expect(series["bucket_seconds"]).to eq(3600)
+      expect(series["buckets"].size).to eq(24)
+      expect(series["buckets"].first.keys).to match_array(%w[at succeeded cache_hit failed active])
+      expect(series["buckets"].sum { |b| b.values_at("succeeded", "cache_hit", "failed", "active").sum }).to eq(json["data"]["requests"]["total"])
     end
 
     it "accepts every documented window" do

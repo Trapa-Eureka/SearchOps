@@ -172,7 +172,7 @@ export function PlanResult({ plan, options, onUpdated }: { plan: IntentPlan; opt
   return (
     <Card title={t("plan.title")}>
       <div className="flex flex-wrap items-center gap-2">
-        <Badge tone={tone} icon={plan.status === "ready" || plan.status === "executed" ? "✓" : plan.status === "unsupported" ? "✕" : plan.status === "unavailable" ? "○" : "?"}>{t(statusKey)}</Badge>
+        <Badge tone={tone} icon={plan.status === "ready" || plan.status === "executed" ? "check" : plan.status === "unsupported" ? "cross" : plan.status === "unavailable" ? "circle" : "info"}>{t(statusKey)}</Badge>
         {intent && <Badge tone="info">{t(INTENT_KEY[intent] ?? "intent.unsupported")}</Badge>}
       </div>
       <p className="mt-3 text-sm" aria-live="polite">{reasonKey ? t(reasonKey) : plan.status === "ready" ? t("plan.readyIntro") : plan.status === "executed" ? t("plan.executedIntro") : ""}</p>

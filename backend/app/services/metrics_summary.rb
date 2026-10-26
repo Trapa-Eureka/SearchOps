@@ -3,6 +3,10 @@
 class MetricsSummary
   WINDOWS = { "1h" => 1.hour, "24h" => 24.hours, "7d" => 7.days, "30d" => 30.days }.freeze
   DEFAULT_WINDOW = "24h"
+  # Width of one bar of the time series for each window (12 to 30 bars).
+  BUCKET_SECONDS = { "1h" => 5.minutes.to_i, "24h" => 1.hour.to_i, "7d" => 12.hours.to_i, "30d" => 1.day.to_i }.freeze
+  # What happened to a request. The four outcomes add up to every run in the bucket.
+  OUTCOMES = %w[succeeded cache_hit failed active].freeze
 
   class << self
     def call(window: DEFAULT_WINDOW, now: Time.current)
@@ -12,6 +16,7 @@ class MetricsSummary
       {
         window: { name: window, from: from, to: now },
         requests: requests(runs),
+        series: series(runs, from, window),
         upstream: upstream(runs.upstream),
         cache: cache(runs),
         errors: runs.where(status: "failed").group(:error_category).count,
@@ -32,6 +37,26 @@ class MetricsSummary
         by_status: SearchRun::STATUSES.index_with { |status| by_status.fetch(status, 0) },
         by_trigger: SearchRun::TRIGGERS.index_with { |trigger| runs.where(triggered_by: trigger).count }
       }
+    end
+
+    # Requests per time slice, split by outcome, oldest first. Slices with no requests are
+    # included (all zeros) so a chart shows quiet periods as gaps instead of skipping them.
+    # A run counts in the slice of its creation time. succeeded = answered by SerpApi,
+    # cache_hit = answered from the local cache, active = still queued or running.
+    def series(runs, from, window)
+      size = BUCKET_SECONDS.fetch(window)
+      count = WINDOWS.fetch(window).to_i / size
+      slot = ActiveRecord::Base.sanitize_sql_array(
+        [ "LEAST(FLOOR(EXTRACT(EPOCH FROM (created_at - ?::timestamptz)) / ?)::int, ?)", from, size, count - 1 ]
+      )
+      outcome = "CASE WHEN status = 'failed' THEN 'failed' WHEN status IN ('queued', 'running') THEN 'active' " \
+                "WHEN cache_source = 'app' THEN 'cache_hit' ELSE 'succeeded' END"
+      counts = runs.group(Arel.sql(slot), Arel.sql(outcome)).count
+
+      buckets = Array.new(count) do |index|
+        OUTCOMES.index_with { |name| counts.fetch([ index, name ], 0) }.merge(at: from + (index * size))
+      end
+      { bucket_seconds: size, buckets: buckets }
     end
 
     # Runs that went to SerpApi. Latency is the time of the last attempt of each run.

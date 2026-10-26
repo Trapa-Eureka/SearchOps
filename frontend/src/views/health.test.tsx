@@ -23,7 +23,7 @@ describe("API health", () => {
     renderApp(<HealthView />);
     await screen.findByText("Success rate");
 
-    const tile = (label: string) => screen.getByText(label, { selector: "dt" }).parentElement as HTMLElement;
+    const tile = (label: string) => screen.getByText(label, { selector: "dt span" }).closest("div") as HTMLElement;
     expect(within(tile("Retries")).getByText("1")).toBeInTheDocument();
     expect(within(tile("Retries")).getByText("9 requests sent to SerpApi")).toBeInTheDocument();
 
@@ -62,9 +62,9 @@ describe("API health", () => {
     mockApi(routes({ "GET /api/v1/metrics/summary": { body: { data: metrics({ queue: { queued: 2, running: 0, oldest_queued_age_seconds: 120, workers_alive: 0 } }) } } }));
     renderApp(<HealthView />);
     await screen.findByText("Workers running");
-    const tile = screen.getByText("Workers running", { selector: "dt" }).parentElement as HTMLElement;
+    const tile = screen.getByText("Workers running", { selector: "dt span" }).closest("div") as HTMLElement;
     expect(within(tile).getByText(/2 queued but no worker is running/)).toBeInTheDocument();
-    const oldest = screen.getByText("Oldest queued search", { selector: "dt" }).parentElement as HTMLElement;
+    const oldest = screen.getByText("Oldest queued search", { selector: "dt span" }).closest("div") as HTMLElement;
     expect(within(oldest).getByText("120 s")).toBeInTheDocument();
   });
 
@@ -84,9 +84,20 @@ describe("API health", () => {
     renderApp(<HealthView />);
     await screen.findAllByRole("table");
 
-    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Show" }), "failed");
+    await userEvent.click(screen.getByRole("button", { name: /^Failed/ }));
 
     await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("status=failed") && String(url).includes("per_page=10"))).toBe(true));
+  });
+
+  it("shows how many searches each status has on its tab, for all searches rather than the period", async () => {
+    mockApi(routes({ "GET /api/v1/searches": { body: { data: runs, meta: { page: 1, per_page: 10, total_count: 3, total_pages: 1, counts: { all: 393, queued: 0, running: 0, succeeded: 372, failed: 21 } } } } }));
+    renderApp(<HealthView />);
+
+    expect(await screen.findByRole("button", { name: "All 393" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Failed 21" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Succeeded 372" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Queued 0" })).toBeInTheDocument();
+    expect(screen.getByText(/counts on the tabs cover every search, not only the selected period/)).toBeInTheDocument();
   });
 
   it("explains an empty log", async () => {

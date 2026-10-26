@@ -3,7 +3,7 @@
 import { useState } from "react";
 import useSWR, { useSWRConfig, type SWRResponse } from "swr";
 import { withQuery } from "@/lib/api";
-import type { Keyword, Metrics, Options, Paginated, RankHistory, Run } from "@/lib/types";
+import type { Keyword, Metrics, Options, Paginated, RankHistory, Run, RunsPage } from "@/lib/types";
 
 const ACTIVE = new Set(["queued", "running"]);
 const POLL_MS = 2000;
@@ -25,7 +25,10 @@ export function usePolledWhile<T>(key: string | null, active: (data: T) => boole
   return response;
 }
 
-const anyRunActive = (page: Paginated<Run>) => page.data.some((run) => ACTIVE.has(run.status));
+const anyRunActive = (page: { data: Run[] }) => page.data.some((run) => ACTIVE.has(run.status));
+// A keyword list shows each keyword's latest runs, so it keeps refreshing while one is still running.
+const anyKeywordBusy = (page: Paginated<Keyword>) =>
+  page.data.some((keyword) => keyword.activity?.recent_runs.some((run) => ACTIVE.has(run.status)));
 
 export function useOptions() {
   return useSWR<{ data: Options }>("/api/v1/options", { revalidateOnFocus: false, dedupingInterval: 60_000 });
@@ -36,7 +39,7 @@ export function useMetrics(window: string) {
 }
 
 export function useKeywords(page: number, perPage = 25) {
-  return useSWR<Paginated<Keyword>>(withQuery("/api/v1/keywords", { page, per_page: perPage }));
+  return usePolledWhile<Paginated<Keyword>>(withQuery("/api/v1/keywords", { page, per_page: perPage }), anyKeywordBusy);
 }
 
 export function useKeyword(id: number | null) {
@@ -59,7 +62,7 @@ export function useRun(keywordId: number | null, runId: number | null) {
 }
 
 export function useRecentRuns(params: { status?: string; per_page?: number; page?: number } = {}) {
-  return usePolledWhile<Paginated<Run>>(withQuery("/api/v1/searches", { per_page: 25, ...params }), anyRunActive);
+  return usePolledWhile<RunsPage>(withQuery("/api/v1/searches", { per_page: 25, ...params }), anyRunActive);
 }
 
 /** Re-fetch everything that depends on keywords and runs after a change. */

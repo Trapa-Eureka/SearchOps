@@ -78,13 +78,14 @@ export function KeywordsView() {
 
   return (
     <>
-      <PageTitle title={t("keywords.title")}>
+      <PageTitle title={t("keywords.title")} description={t("keywords.description")}>
         {limits && total !== undefined && t("keywords.count", { count: total, max: limits.max_keywords })}
       </PageTitle>
 
       <Card
-        title={t("keywords.add")}
-        actions={<Button aria-expanded={open} onClick={() => setFormOpen(!open)}>{open ? t("common.close") : t("keywords.add")}</Button>}
+        icon="plus"
+        title={t("keywords.addTitle")}
+        actions={<Button aria-expanded={open} icon={open ? undefined : "plus"} onClick={() => setFormOpen(!open)}>{open ? t("common.close") : t("keywords.add")}</Button>}
         className="mb-5"
       >
         {!open && <p className="text-sm text-muted">{t("keywords.addHint")}</p>}
@@ -102,7 +103,7 @@ export function KeywordsView() {
         )}
       </Card>
 
-      <Card title={t("keywords.list")}>
+      <Card icon="search" title={t("keywords.list")}>
         {keywords.error && <ErrorState error={keywords.error} onRetry={() => keywords.mutate()} />}
         {!keywords.data && !keywords.error && <Loading />}
         {keywords.data && keywords.data.data.length === 0 && (

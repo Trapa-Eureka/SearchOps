@@ -41,7 +41,7 @@ describe("Keyword detail", () => {
     expect(await screen.findByRole("img", { name: /Rank history chart/ })).toBeInTheDocument();
     expect(screen.getByText("Lower is better: rank 1 is the top result.")).toBeInTheDocument();
     expect(await screen.findByRole("table", { name: "Search results in order" })).toBeInTheDocument();
-    expect(screen.getByText("Philippines · English")).toBeInTheDocument();
+    expect(screen.getAllByText("Philippines · English").length).toBeGreaterThan(0);
     expect(screen.getByText("react.dev", { selector: "dd" })).toBeInTheDocument();
   });
 

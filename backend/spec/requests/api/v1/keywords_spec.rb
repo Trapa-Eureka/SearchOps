@@ -27,8 +27,25 @@ RSpec.describe "Api::V1::Keywords", type: :request do
 
       expect(json["data"].map { |k| k["id"] }).to eq([ newer.id, older.id ])
       expect(json["data"].first.keys).to match_array(
-        %w[id query engine country language location target_domain active schedule created_at updated_at freshness]
+        %w[id query engine country language location target_domain active schedule created_at updated_at freshness activity]
       )
+    end
+
+    it "includes at-a-glance activity: recent runs and the current rank" do
+      keyword = create(:keyword, target_domain: "example.com")
+      run = create(:search_run, keyword: keyword, upstream_latency_ms: 250)
+      create(:rank_snapshot, keyword: keyword, search_run: run, rank: 4, target_domain: "example.com")
+      create(:keyword, query: "quiet")
+
+      get "/api/v1/keywords"
+
+      busy = json["data"].find { |k| k["id"] == keyword.id }
+      quiet = json["data"].find { |k| k["id"] != keyword.id }
+      expect(busy["activity"]["recent_runs"].map { |r| r["id"] }).to eq([ run.id ])
+      expect(busy["activity"]["latency_ms"]).to eq("samples" => 1, "p95" => 250, "max" => 250)
+      expect(busy["activity"]["rank"]).to include("rank" => 4, "found" => true)
+      expect(busy["activity"]["rank"]["comparison"]["status"]).to eq("baseline")
+      expect(quiet["activity"]).to eq("recent_runs" => [], "latency_ms" => { "samples" => 0, "p95" => nil, "max" => nil }, "rank" => nil)
     end
 
     it "paginates and reports totals" do

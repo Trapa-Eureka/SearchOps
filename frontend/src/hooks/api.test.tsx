@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Wrapper, mockApi, run } from "@/test/utils";
-import { usePolledWhile } from "./api";
+import { Wrapper, activity, activityRun, keyword, mockApi, page, run } from "@/test/utils";
+import { useKeywords, usePolledWhile } from "./api";
 
 type Page = { data: { id: number; status: string }[] };
 const active = (page: Page) => page.data.some((item) => item.status === "queued" || item.status === "running");
@@ -94,5 +94,48 @@ describe("usePolledWhile with real timers", () => {
 
     await waitFor(() => expect(result.current.error).toBeDefined());
     expect(result.current.error).toMatchObject({ status: 500, code: "boom" });
+  });
+});
+
+describe("useKeywords", () => {
+  beforeEach(() => vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] }));
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  async function advance(ms: number) {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+  }
+
+  it("keeps refreshing while any keyword still has a queued or running search, then stops", async () => {
+    let status = "running";
+    const fetchMock = mockApi({
+      "GET /api/v1/keywords": () => ({ body: page([keyword({ activity: activity({ recent_runs: [activityRun({ status })] }) })]) }),
+    });
+    const { result } = renderHook(() => useKeywords(1, 100), { wrapper: Wrapper });
+
+    await advance(10);
+    expect(result.current.data?.data[0].activity?.recent_runs[0].status).toBe("running");
+    await advance(2100);
+    expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+
+    status = "succeeded";
+    await advance(2100);
+    const calls = fetchMock.mock.calls.length;
+    await advance(10_000);
+
+    expect(fetchMock).toHaveBeenCalledTimes(calls);
+  });
+
+  it("does not poll a list whose searches are all finished or that has no activity", async () => {
+    const fetchMock = mockApi({ "GET /api/v1/keywords": { body: page([keyword(), keyword({ id: 2, activity: undefined })]) } });
+    renderHook(() => useKeywords(1, 100), { wrapper: Wrapper });
+
+    await advance(10_000);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

@@ -55,9 +55,28 @@ export const freshness = (overrides: Record<string, unknown> = {}) => ({
   last_attempt_at: new Date(Date.now() - 3_600_000).toISOString(), ...overrides,
 });
 
+/** A 24-hour series (one bar per hour). `counts` are put into the given slice indexes, the rest are zero. */
+export const series = (counts: Record<number, Partial<Record<"succeeded" | "cache_hit" | "failed" | "active", number>>> = {}, slices = 24, seconds = 3600) => ({
+  bucket_seconds: seconds,
+  buckets: Array.from({ length: slices }, (_, index) => ({
+    at: new Date(Date.UTC(2026, 9, 25, 0, 0, 0) + index * seconds * 1000).toISOString(), succeeded: 0, cache_hit: 0, failed: 0, active: 0, ...counts[index],
+  })),
+});
+
+export const activityRun = (overrides: Record<string, unknown> = {}) => ({
+  id: 1, status: "succeeded", cache_hit: false, error_category: null, latency_ms: 900, retried: false, created_at: "2026-10-26T01:00:00Z", ...overrides,
+});
+
+export const activity = (overrides: Record<string, unknown> = {}) => ({
+  recent_runs: [activityRun({ id: 1 }), activityRun({ id: 2, latency_ms: 1800 }), activityRun({ id: 3, status: "failed", error_category: "timeout", latency_ms: 15000 }), activityRun({ id: 4, cache_hit: true, latency_ms: null })],
+  latency_ms: { samples: 3, p95: 14000, max: 15000 },
+  rank: { rank: 3, found: true, captured_at: "2026-10-26T01:00:00Z", target_domain: "react.dev", comparison: { status: "improved", delta: 2, previous_rank: 5 } },
+  ...overrides,
+});
+
 export const keyword = (overrides: Record<string, unknown> = {}) => ({
   id: 1, query: "react developer", engine: "google", country: "ph", language: "en", location: null, target_domain: "react.dev",
-  active: true, schedule: "daily", created_at: "2026-10-20T00:00:00Z", updated_at: "2026-10-20T00:00:00Z", freshness: freshness(), ...overrides,
+  active: true, schedule: "daily", created_at: "2026-10-20T00:00:00Z", updated_at: "2026-10-20T00:00:00Z", freshness: freshness(), activity: activity(), ...overrides,
 });
 
 export const run = (overrides: Record<string, unknown> = {}) => ({
@@ -77,6 +96,7 @@ export const options = () => ({
 export const metrics = (overrides: Record<string, unknown> = {}) => ({
   window: { name: "24h", from: "2026-10-25T00:00:00Z", to: "2026-10-26T00:00:00Z" },
   requests: { total: 10, by_status: { queued: 0, running: 0, succeeded: 8, failed: 2 }, by_trigger: { manual: 6, scheduled: 4 } },
+  series: series({ 3: { succeeded: 3, cache_hit: 1 }, 10: { succeeded: 3, failed: 1 }, 22: { cache_hit: 1, failed: 1 } }),
   upstream: { calls: 9, retries: 1, runs_succeeded: 8, runs_failed: 2, success_rate: 0.8, latency_ms: { samples: 10, p50: 900, p95: 4200, max: 15000 } },
   cache: { hits: 2, misses: 8, hit_rate: 0.2, ttl_seconds: 3600 },
   errors: { timeout: 1, auth: 1 },

@@ -5,14 +5,15 @@ import { useState } from "react";
 import { FreshnessBadge } from "@/components/badges";
 import { useLocale } from "@/components/locale";
 import { errorCategoryLabel, RunsTable } from "@/components/tables";
+import { OutcomeChart } from "@/components/outcome-chart";
 import { RunTimeline } from "@/components/timeline";
-import { Badge, Card, EmptyState, ErrorState, INPUT_CLASS, Loading, Metric, PageTitle, Pagination } from "@/components/ui";
+import { Badge, Card, EmptyState, ErrorState, Loading, Metric, PageTitle, Pagination, Segmented } from "@/components/ui";
 import { useKeywords, useMetrics, useRecentRuns } from "@/hooks/api";
 import { formatMs, formatNumber, formatPercent, formatRelative } from "@/lib/format";
 import type { MessageKey } from "@/lib/i18n";
 
 const WINDOWS = ["1h", "24h", "7d", "30d"] as const;
-const WINDOW_KEY: Record<(typeof WINDOWS)[number], MessageKey> = { "1h": "window.1h", "24h": "window.24h", "7d": "window.7d", "30d": "window.30d" };
+const WINDOW_KEY: Record<(typeof WINDOWS)[number], MessageKey> = { "1h": "window.s1h", "24h": "window.s24h", "7d": "window.s7d", "30d": "window.s30d" };
 const STATUS_FILTERS = ["", "failed", "succeeded", "running", "queued"] as const;
 const FILTER_KEY: Record<(typeof STATUS_FILTERS)[number], MessageKey> = {
   "": "health.filterAll", failed: "status.failed", succeeded: "status.succeeded", running: "status.running", queued: "status.queued",
@@ -28,6 +29,8 @@ export function HealthView() {
   const timeline = useRecentRuns({ per_page: 50 });
   const runs = useRecentRuns({ per_page: 10, page, status });
   const keywords = useKeywords(1, 100);
+  // Per-status totals for the filter tabs; they do not change when a filter is chosen.
+  const counts = runs.data?.meta.counts;
 
   const data = metrics.data?.data;
   const stale = (keywords.data?.data ?? []).filter((keyword) => keyword.freshness?.state === "stale");
@@ -36,13 +39,13 @@ export function HealthView() {
 
   return (
     <>
-      <PageTitle title={t("health.title")}>
-        <label className="flex items-center gap-2">
-          {t("window.label")}
-          <select className={`${INPUT_CLASS} w-auto py-1`} value={windowName} onChange={(event) => setWindowName(event.target.value as (typeof WINDOWS)[number])}>
-            {WINDOWS.map((name) => <option key={name} value={name}>{t(WINDOW_KEY[name])}</option>)}
-          </select>
-        </label>
+      <PageTitle title={t("health.title")} description={t("health.description")}>
+        <Segmented
+          label={t("window.label")}
+          value={windowName}
+          onChange={setWindowName}
+          options={WINDOWS.map((name) => ({ value: name, label: t(WINDOW_KEY[name]) }))}
+        />
       </PageTitle>
 
       {metrics.error && <ErrorState error={metrics.error} onRetry={() => metrics.mutate()} />}
@@ -50,21 +53,25 @@ export function HealthView() {
 
       {data && (
         <>
-          <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Metric label={t("metric.successRate")} value={formatPercent(data.upstream.success_rate, locale)} hint={data.upstream.success_rate === null ? t("metric.noFinished") : t("metric.successHint", { ok: data.upstream.runs_succeeded, failed: data.upstream.runs_failed })} />
-            <Metric label={t("metric.latencyP50")} value={formatMs(data.upstream.latency_ms.p50, locale)} hint={t("metric.samples", { count: data.upstream.latency_ms.samples })} />
-            <Metric label={t("metric.latencyP95")} value={formatMs(data.upstream.latency_ms.p95, locale)} hint={t("metric.latencyMax", { max: formatMs(data.upstream.latency_ms.max, locale) })} />
-            <Metric label={t("metric.retries")} value={formatNumber(data.upstream.retries, locale)} hint={t("metric.upstreamCallsHint", { count: data.upstream.calls })} tone={data.upstream.retries > 0 ? "warn" : "neutral"} />
-            <Metric label={t("metric.cacheHitRate")} value={formatPercent(data.cache.hit_rate, locale)} hint={data.cache.hit_rate === null ? t("metric.noRequests") : t("metric.cacheHint", { hits: data.cache.hits, misses: data.cache.misses, seconds: data.cache.ttl_seconds })} />
-            <Metric label={t("metric.budget")} value={`${formatNumber(data.budget.used_today, locale)} / ${formatNumber(data.budget.daily_limit, locale)}`} hint={data.budget.remaining_today === 0 ? t("metric.budgetSpent") : t("metric.budgetLeft", { count: data.budget.remaining_today })} tone={data.budget.remaining_today === 0 ? "danger" : "neutral"} />
-            <Metric label={t("metric.workers")} value={formatNumber(data.queue.workers_alive, locale)}
+          <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <Metric icon="check" iconTone="ok" label={t("metric.successRate")} value={formatPercent(data.upstream.success_rate, locale)} hint={data.upstream.success_rate === null ? t("metric.noFinished") : t("metric.successHint", { ok: data.upstream.runs_succeeded, failed: data.upstream.runs_failed })} />
+            <Metric icon="gauge" label={t("metric.latencyP50")} value={formatMs(data.upstream.latency_ms.p50, locale)} hint={t("metric.samples", { count: data.upstream.latency_ms.samples })} />
+            <Metric icon="gauge" iconTone="warn" label={t("metric.latencyP95")} value={formatMs(data.upstream.latency_ms.p95, locale)} hint={t("metric.latencyMax", { max: formatMs(data.upstream.latency_ms.max, locale) })} />
+            <Metric icon="refresh" iconTone="warn" label={t("metric.retries")} value={formatNumber(data.upstream.retries, locale)} hint={t("metric.upstreamCallsHint", { count: data.upstream.calls })} tone={data.upstream.retries > 0 ? "warn" : "neutral"} />
+            <Metric icon="bolt" label={t("metric.cacheHitRate")} value={formatPercent(data.cache.hit_rate, locale)} hint={data.cache.hit_rate === null ? t("metric.noRequests") : t("metric.cacheHint", { hits: data.cache.hits, misses: data.cache.misses, seconds: data.cache.ttl_seconds })} />
+            <Metric icon="coins" iconTone={data.budget.remaining_today === 0 ? "danger" : "warn"} label={t("metric.budget")} value={`${formatNumber(data.budget.used_today, locale)} / ${formatNumber(data.budget.daily_limit, locale)}`} hint={data.budget.remaining_today === 0 ? t("metric.budgetSpent") : t("metric.budgetLeft", { count: data.budget.remaining_today })} tone={data.budget.remaining_today === 0 ? "danger" : "neutral"} />
+            <Metric icon="server" iconTone={data.queue.workers_alive === 0 && data.queue.queued > 0 ? "danger" : "ok"} label={t("metric.workers")} value={formatNumber(data.queue.workers_alive, locale)}
               hint={data.queue.workers_alive === 0 && data.queue.queued > 0 ? t("metric.noWorkerWarning", { count: data.queue.queued }) : t("metric.queueHint", { queued: data.queue.queued, running: data.queue.running })}
               tone={data.queue.workers_alive === 0 && data.queue.queued > 0 ? "danger" : "neutral"} />
-            <Metric label={t("metric.oldestQueued")} value={data.queue.oldest_queued_age_seconds === null ? "—" : formatMs(data.queue.oldest_queued_age_seconds * 1000, locale)} hint={data.queue.oldest_queued_age_seconds === null ? t("metric.nothingQueued") : t("metric.waitingForWorker")} />
+            <Metric icon="clock" label={t("metric.oldestQueued")} value={data.queue.oldest_queued_age_seconds === null ? "—" : formatMs(data.queue.oldest_queued_age_seconds * 1000, locale)} hint={data.queue.oldest_queued_age_seconds === null ? t("metric.nothingQueued") : t("metric.waitingForWorker")} />
           </dl>
 
+          <Card icon="pulse" title={t("outcomes.title")} description={t("outcomes.description")} className="mt-5">
+            <OutcomeChart series={data.series} />
+          </Card>
+
           <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-2">
-            <Card title={t("health.errors")}>
+            <Card icon="warning" title={t("health.errors")}>
               {errors.length === 0
                 ? <p className="text-sm text-muted">{t("health.noErrors")}</p>
                 : (
@@ -86,7 +93,7 @@ export function HealthView() {
                 )}
             </Card>
 
-            <Card title={t("health.stale")}>
+            <Card icon="clock" title={t("health.stale")}>
               {keywords.error && <ErrorState error={keywords.error} onRetry={() => keywords.mutate()} />}
               {!keywords.data && !keywords.error && <Loading />}
               {keywords.data && stale.length === 0 && <p className="text-sm text-muted">{t("overview.nothingStale")}</p>}
@@ -104,9 +111,9 @@ export function HealthView() {
             </Card>
           </div>
 
-          <Card title={t("health.laya")} className="mt-5">
+          <Card icon="sparkle" title={t("health.laya")} className="mt-5">
             <div className="flex flex-wrap items-center gap-2">
-              <Badge tone={data.intent.enabled ? "ok" : "neutral"} icon={data.intent.enabled ? "●" : "○"}>{data.intent.enabled ? t("health.layaOn") : t("health.layaOff")}</Badge>
+              <Badge tone={data.intent.enabled ? "ok" : "neutral"} icon={data.intent.enabled ? "check" : "circle"}>{data.intent.enabled ? t("health.layaOn") : t("health.layaOff")}</Badge>
               {data.intent.enabled && data.intent.requests === 0 && <span className="text-sm text-muted">{t("health.layaNoRequests")}</span>}
               {data.intent.enabled && data.intent.requests > 0 && <span className="text-sm text-muted">{t("health.layaStats", { requests: data.intent.requests, p50: formatMs(data.intent.laya_latency_ms.p50, locale), p95: formatMs(data.intent.laya_latency_ms.p95, locale) })}</span>}
               {!data.intent.enabled && <span className="text-sm text-muted">{t("health.layaOffHint")}</span>}
@@ -118,7 +125,7 @@ export function HealthView() {
         </>
       )}
 
-      <Card title={t("health.timeline")} className="mt-5">
+      <Card icon="pulse" title={t("health.timeline")} className="mt-5">
         {timeline.error && <ErrorState error={timeline.error} onRetry={() => timeline.mutate()} />}
         {!timeline.data && !timeline.error && <Loading />}
         {timeline.data && timeline.data.data.length === 0 && <EmptyState title={t("health.noRunsTitle")}>{t("health.noRunsBody")}</EmptyState>}
@@ -132,15 +139,17 @@ export function HealthView() {
       </Card>
 
       <Card
+        icon="search"
         title={t("health.recent")}
+        description={t("health.recentDescription")}
         className="mt-5"
         actions={
-          <label className="flex items-center gap-2 text-sm">
-            {t("health.filter")}
-            <select className={`${INPUT_CLASS} w-auto py-1`} value={status} onChange={(event) => { setStatus(event.target.value as (typeof STATUS_FILTERS)[number]); setPage(1); }}>
-              {STATUS_FILTERS.map((value) => <option key={value} value={value}>{t(FILTER_KEY[value])}</option>)}
-            </select>
-          </label>
+          <Segmented
+            label={t("health.filter")}
+            value={status}
+            onChange={(value) => { setStatus(value); setPage(1); }}
+            options={STATUS_FILTERS.map((value) => ({ value, label: t(FILTER_KEY[value]), count: counts?.[value === "" ? "all" : value] }))}
+          />
         }
       >
         {runs.error && <ErrorState error={runs.error} onRetry={() => runs.mutate()} />}

@@ -1,7 +1,7 @@
 import { screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { renderApp, freshness } from "@/test/utils";
-import { CacheBadge, ChangeBadge, FreshnessBadge, RankValue, RunStatusBadge, TriggerBadge } from "./badges";
+import { CacheBadge, ChangeBadge, FreshnessBadge, RankChange, RankValue, RunStatusBadge, TriggerBadge } from "./badges";
 import type { Freshness, RunStatus } from "@/lib/types";
 
 describe("RunStatusBadge", () => {
@@ -93,5 +93,27 @@ describe("RankValue", () => {
     renderApp(<RankValue rank={null} />);
     expect(screen.getByText("Not found")).toBeInTheDocument();
     expect(screen.queryByText(/#0/)).not.toBeInTheDocument();
+  });
+});
+
+describe("RankChange", () => {
+  it("shows an arrow and how many places, with the word for screen readers", () => {
+    const { rerender } = renderApp(<RankChange comparison={{ status: "improved", delta: 3 }} />);
+    expect(screen.getByText("3").closest("span")).toHaveTextContent("3 Improved");
+    expect(screen.getByTitle("Improved")).toBeInTheDocument();
+
+    rerender(<RankChange comparison={{ status: "declined", delta: -2 }} />);
+    expect(screen.getByText("2").closest("span")).toHaveTextContent("2 Declined");
+  });
+
+  it("uses words when there is no number to show", () => {
+    const { rerender } = renderApp(<RankChange comparison={{ status: "unchanged", delta: 0 }} />);
+    expect(screen.getByText("Unchanged")).toBeInTheDocument();
+    rerender(<RankChange comparison={{ status: "baseline", delta: null }} />);
+    expect(screen.getByText("First snapshot")).toBeInTheDocument();
+    rerender(<RankChange comparison={{ status: "not_comparable", delta: null }} />);
+    expect(screen.getByText("Not comparable")).toBeInTheDocument();
+    rerender(<RankChange comparison={{ status: "dropped", delta: null }} />);
+    expect(screen.getByText("Dropped out")).toBeInTheDocument();
   });
 });

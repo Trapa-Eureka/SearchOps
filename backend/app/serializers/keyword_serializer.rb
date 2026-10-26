@@ -3,10 +3,16 @@ class KeywordSerializer
 
   # freshness is a KeywordFreshness::Info. Compute it for a whole page with
   # KeywordFreshness.for(keywords) to avoid one query per keyword.
-  def self.call(keyword, freshness = nil)
+  def self.call(keyword, freshness = nil, activity = nil)
     data = keyword.as_json(only: FIELDS)
     data["freshness"] = freshness_json(freshness) if freshness
+    data["activity"] = activity_json(activity) if activity
     data
+  end
+
+  # activity is a KeywordActivity::Info: the latest runs and the current rank at a glance.
+  def self.activity_json(info)
+    { recent_runs: info.recent_runs, latency_ms: info.latency_ms, rank: info.rank }
   end
 
   def self.freshness_json(info)

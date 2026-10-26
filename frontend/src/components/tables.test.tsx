@@ -1,9 +1,9 @@
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { renderApp, run } from "@/test/utils";
-import type { RankHistoryEntry, Run, SearchResultRow } from "@/lib/types";
-import { RankTable, ResultsTable, RunsTable } from "./tables";
+import { activity, freshness, keyword, renderApp, run } from "@/test/utils";
+import type { Keyword, RankHistoryEntry, Run, SearchResultRow } from "@/lib/types";
+import { KeywordsTable, RankTable, ResultsTable, RunsTable } from "./tables";
 
 const result = (position: number, url: string, extra: Partial<SearchResultRow> = {}): SearchResultRow => ({
   position, url, title: `Title ${position}`, display_domain: null, snippet: `Snippet ${position}`, ...extra,
@@ -139,5 +139,77 @@ describe("RunsTable", () => {
   it("shows the keyword column and links to it when asked", () => {
     renderApp(<RunsTable showKeyword runs={[run({ id: 9, keyword: { id: 7, query: "vue developer", country: "us", language: "en", target_domain: null } }) as unknown as Run]} />);
     expect(screen.getByRole("link", { name: "vue developer" })).toHaveAttribute("href", "/keywords/7");
+  });
+});
+
+describe("KeywordsTable", () => {
+  const rows = [
+    keyword({ id: 1, query: "react developer" }),
+    keyword({ id: 2, query: "vue developer", target_domain: "vuejs.org", activity: activity({ rank: { rank: null, found: false, captured_at: "2026-10-26T00:00:00Z", target_domain: "vuejs.org", comparison: { status: "dropped", delta: null, previous_rank: 4 } } }) }),
+    keyword({ id: 3, query: "python tutorial", target_domain: null, active: false, schedule: "weekly", activity: activity({ rank: null, recent_runs: [], latency_ms: { samples: 0, p95: null, max: null } }), freshness: freshness({ state: "no_data", last_success_at: null }) }),
+    keyword({ id: 4, query: "new one", activity: undefined }),
+  ] as unknown as Keyword[];
+  const noop = () => undefined;
+
+  it("shows the rank with how far it moved, and the target domain under it", () => {
+    renderApp(<KeywordsTable keywords={rows} onSearch={noop} onToggleActive={noop} />);
+    const row = screen.getByRole("link", { name: "react developer" }).closest("tr") as HTMLElement;
+
+    expect(within(row).getByText("#3")).toBeInTheDocument();
+    expect(within(row).getByText("react.dev")).toBeInTheDocument();
+    expect(within(row).getByText(/Improved/)).toBeInTheDocument(); // read by screen readers; the arrow shows 2 places
+  });
+
+  it("says 'Not found' without a number for a keyword that dropped out, never rank 0", () => {
+    renderApp(<KeywordsTable keywords={rows} onSearch={noop} onToggleActive={noop} />);
+    const row = screen.getByRole("link", { name: "vue developer" }).closest("tr") as HTMLElement;
+
+    expect(within(row).getByText("Not found")).toBeInTheDocument();
+    expect(within(row).getByText("Dropped out")).toBeInTheDocument();
+    expect(within(row).queryByText("#0")).not.toBeInTheDocument();
+  });
+
+  it("shows dashes and reasons, not made-up values, when there is no rank, no runs, or no activity at all", () => {
+    renderApp(<KeywordsTable keywords={rows} onSearch={noop} onToggleActive={noop} />);
+
+    const python = screen.getByRole("link", { name: "python tutorial" }).closest("tr") as HTMLElement;
+    expect(within(python).getByText("none")).toBeInTheDocument();
+    expect(within(python).getByText("No searches yet")).toBeInTheDocument();
+    expect(within(python).getByText("Paused")).toBeInTheDocument();
+    expect(within(python).getByText("No data yet")).toBeInTheDocument();
+
+    const fresh = screen.getByRole("link", { name: "new one" }).closest("tr") as HTMLElement;
+    expect(within(fresh).getAllByText("—").length).toBeGreaterThanOrEqual(2);
+    expect(document.body).not.toHaveTextContent("NaN");
+  });
+
+  it("shows p95 with a tooltip saying what it covers", () => {
+    renderApp(<KeywordsTable keywords={rows} onSearch={noop} onToggleActive={noop} />);
+    const row = screen.getByRole("link", { name: "react developer" }).closest("tr") as HTMLElement;
+
+    expect(within(row).getByText("14 s")).toHaveAttribute("title", "Slowest 5% of the last 3 searches that called SerpApi");
+  });
+
+  it("gives the action buttons words for screen readers and tooltips for the mouse", () => {
+    renderApp(<KeywordsTable keywords={rows} onSearch={noop} onToggleActive={noop} />);
+    const row = screen.getByRole("link", { name: "react developer" }).closest("tr") as HTMLElement;
+
+    expect(within(row).getByRole("button", { name: "Search now" })).toHaveAttribute("title", "Search now");
+    expect(within(row).getByRole("button", { name: "Pause" })).toBeInTheDocument();
+    expect(within(screen.getByRole("link", { name: "python tutorial" }).closest("tr") as HTMLElement).getByRole("button", { name: "Resume" })).toBeInTheDocument();
+  });
+
+  it("is read-only without handlers: no actions column", () => {
+    renderApp(<KeywordsTable keywords={rows} />);
+
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("columnheader")).toHaveLength(5);
+  });
+
+  it("starts the avatar with the first letter, also for Korean and emoji", () => {
+    const odd = [keyword({ id: 9, query: "react 개발자" }), keyword({ id: 10, query: "개발자 react" }), keyword({ id: 11, query: "🚀 launch" })] as unknown as Keyword[];
+    renderApp(<KeywordsTable keywords={odd} />);
+
+    expect(screen.getAllByText(/^(R|개|🚀)$/).map((node) => node.textContent)).toEqual(["R", "개", "🚀"]);
   });
 });

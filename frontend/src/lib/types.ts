@@ -2,6 +2,9 @@
 
 export type PageMeta = { page: number; per_page: number; total_count: number; total_pages: number };
 export type Paginated<T> = { data: T[]; meta: PageMeta };
+/** Runs per status for the whole list (ignoring the status filter), for filter tabs. */
+export type RunCounts = Record<"all" | "queued" | "running" | "succeeded" | "failed", number>;
+export type RunsPage = { data: Run[]; meta: PageMeta & { counts?: RunCounts } };
 
 export type FreshnessState = "fresh" | "stale" | "no_data";
 export type Freshness = {
@@ -10,6 +13,30 @@ export type Freshness = {
   last_success_at: string | null;
   last_attempt_status: "succeeded" | "failed" | null;
   last_attempt_at: string | null;
+};
+
+/** One run in a keyword's recent-runs strip (oldest first). */
+export type ActivityRun = {
+  id: number;
+  status: RunStatus;
+  cache_hit: boolean;
+  error_category: ErrorCategory | null;
+  latency_ms: number | null;
+  retried: boolean;
+  created_at: string;
+};
+export type KeywordRank = {
+  rank: number | null;
+  found: boolean;
+  captured_at: string;
+  target_domain: string;
+  comparison: { status: ComparisonStatus; delta: number | null; previous_rank: number | null };
+};
+/** What a keyword list shows at a glance. Latency covers the runs in the strip only. */
+export type KeywordActivity = {
+  recent_runs: ActivityRun[];
+  latency_ms: { samples: number; p95: number | null; max: number | null };
+  rank: KeywordRank | null;
 };
 
 export type Schedule = "manual" | "daily" | "weekly";
@@ -26,6 +53,7 @@ export type Keyword = {
   created_at: string;
   updated_at: string;
   freshness?: Freshness;
+  activity?: KeywordActivity;
 };
 export type KeywordInput = {
   query: string;
@@ -102,8 +130,11 @@ export type RankHistory = {
 };
 
 export type Latency = { samples: number; p50: number | null; p95: number | null; max: number | null };
+/** Requests in one time slice. The four outcomes add up to every request in the slice. */
+export type SeriesBucket = { at: string; succeeded: number; cache_hit: number; failed: number; active: number };
 export type Metrics = {
   window: { name: string; from: string; to: string };
+  series: { bucket_seconds: number; buckets: SeriesBucket[] };
   requests: { total: number; by_status: Record<RunStatus, number>; by_trigger: Record<"manual" | "scheduled", number> };
   upstream: { calls: number; retries: number; runs_succeeded: number; runs_failed: number; success_rate: number | null; latency_ms: Latency };
   cache: { hits: number; misses: number; hit_rate: number | null; ttl_seconds: number };

@@ -1,40 +1,50 @@
 @import "tailwindcss";
 
 /*
-  Colour tokens. Text/background pairs are checked for WCAG AA contrast (4.5:1) by
+  Colour tokens. Text/background pairs are checked for WCAG AA contrast (4.5:1) and the
+  borders and chart colours that identify a control or a data mark for 3:1 by
   src/lib/contrast.test.ts, which reads this file, so edit values here and run the tests.
-  Status colours are always paired with a symbol and a word in the UI, never colour alone.
+  Status and chart categories are never told apart by colour alone: every one also has a
+  word, and chart marks have their own pattern.
 */
 :root {
   color-scheme: light dark;
-  --bg: #f6f7f9;
+  --bg: #eceff3;
   --surface: #ffffff;
-  --text: #111827;
-  --muted: #4b5563;
-  --border: #d1d5db;
-  --accent: #1d4ed8;
-  --accent-hover: #1e40af;
+  --surface-2: #f5f6f8;
+  --text: #0f172a;
+  --muted: #4d5a6b;
+  --border: #e3e6ec;
+  --border-strong: #8791a1;
+  --accent: #2158d6;
+  --accent-hover: #1a47b0;
   --accent-contrast: #ffffff;
-  --ok: #166534;
-  --ok-bg: #dcfce7;
-  --warn: #854d0e;
-  --warn-bg: #fef3c7;
-  --danger: #991b1b;
-  --danger-bg: #fee2e2;
-  --info: #1e40af;
-  --info-bg: #dbeafe;
+  --ok: #0f6b3a;
+  --ok-bg: #dff5e8;
+  --warn: #8a4b06;
+  --warn-bg: #fdefd0;
+  --danger: #a62020;
+  --danger-bg: #fde4e4;
+  --info: #1e4fb8;
+  --info-bg: #e1ebfd;
+  --c-success: #0e8f82;
+  --c-cache: #3b7ff0;
+  --c-failed: #e4570f;
+  --c-active: #6b7788;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0b0f17;
-    --surface: #121826;
-    --text: #e5e7eb;
-    --muted: #9ca3af;
-    --border: #2f3a4d;
-    --accent: #7aa2ff;
-    --accent-hover: #a3bfff;
-    --accent-contrast: #0b0f17;
+    --bg: #090d14;
+    --surface: #111826;
+    --surface-2: #172033;
+    --text: #e6e9ef;
+    --muted: #a0abbb;
+    --border: #243047;
+    --border-strong: #6b7a93;
+    --accent: #7ea6ff;
+    --accent-hover: #a9c3ff;
+    --accent-contrast: #08101f;
     --ok: #86efac;
     --ok-bg: #12301f;
     --warn: #fcd34d;
@@ -43,15 +53,21 @@
     --danger-bg: #3b1212;
     --info: #93c5fd;
     --info-bg: #14284d;
+    --c-success: #2cc4b4;
+    --c-cache: #6aa2ff;
+    --c-failed: #ff8a4c;
+    --c-active: #98a4b6;
   }
 }
 
 @theme inline {
   --color-bg: var(--bg);
   --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
   --color-text: var(--text);
   --color-muted: var(--muted);
   --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
   --color-accent-contrast: var(--accent-contrast);
@@ -63,6 +79,11 @@
   --color-danger-bg: var(--danger-bg);
   --color-info: var(--info);
   --color-info-bg: var(--info-bg);
+  --color-c-success: var(--c-success);
+  --color-c-cache: var(--c-cache);
+  --color-c-failed: var(--c-failed);
+  --color-c-active: var(--c-active);
+  --shadow-card: 0 1px 2px rgb(15 23 42 / 0.05), 0 0 0 1px var(--border);
 }
 
 body {
@@ -70,6 +91,8 @@ body {
   color: var(--text);
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
   line-height: 1.5;
+  font-feature-settings: "tnum" 1, "cv11" 1;
+  -webkit-font-smoothing: antialiased;
 }
 
 @media (prefers-reduced-motion: reduce) {

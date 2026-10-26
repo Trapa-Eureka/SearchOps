@@ -1,6 +1,6 @@
 # API Contract (v1)
 
-Status after Stage 4: keyword CRUD, asynchronous searches through SerpApi (with caching, de-duplication, retries, and scheduled checks), run listing, rank history, and a metrics summary. Stage 5 adds optional natural-language planning (`/intent/plan`). Stage 6 adds two read-only endpoints for the dashboard (`/options`, `/searches`).
+Status after Stage 4: keyword CRUD, asynchronous searches through SerpApi (with caching, de-duplication, retries, and scheduled checks), run listing, rank history, and a metrics summary. Stage 5 adds optional natural-language planning (`/intent/plan`). Stage 6 adds two read-only endpoints for the dashboard (`/options`, `/searches`), a time series in the metrics, and an `activity` summary on keywords.
 
 Base path: `/api/v1`. Format: JSON. **No authentication yet**: the API is for local development only and must not be exposed publicly until Stage 8 adds authentication, CORS, and HTTPS.
 
@@ -53,6 +53,22 @@ Limit: at most `SEARCH_MAX_KEYWORDS` keywords (default 50), so scheduled checks 
 `target_domain` normalization (`DomainNormalizer`): `https://www.Example.com/path?x=1` becomes `example.com`. A leading `www.` is dropped; other subdomains are kept. Rejected: single-label hosts (`localhost`), IP addresses, ports are stripped, userinfo, non-HTTP(S) schemes, non-ASCII hosts, and malformed labels. Matching against result hosts (used from Stage 3): a result matches when its host equals the target or is a subdomain of it, so `blog.example.com` matches `example.com` but `notexample.com` does not.
 
 Response object (`KeywordSerializer`): `id, query, engine, country, language, location, target_domain, active, schedule, created_at, updated_at`. `id`, `created_at`, and `updated_at` cannot be set by clients.
+
+### Activity summary
+
+Every keyword in `GET /keywords` and `GET /keywords/:id` (and in create and update responses) carries `activity`, so a list can show how a keyword is doing without one request per row. It is computed for a whole page in a fixed number of queries.
+
+```json
+"activity": {
+  "recent_runs": [ { "id": 41, "status": "succeeded", "cache_hit": false, "error_category": null, "latency_ms": 912, "retried": false, "created_at": "..." } ],
+  "latency_ms": { "samples": 18, "p95": 4210, "max": 15000 },
+  "rank": { "rank": 3, "found": true, "captured_at": "...", "target_domain": "react.dev", "comparison": { "status": "improved", "delta": 2, "previous_rank": 5 } }
+}
+```
+
+- `recent_runs`: the newest 20 runs, **oldest first**, including cache hits and runs that are still queued or running. It contains no search terms, results, or error text.
+- `latency_ms`: percentile over the runs in `recent_runs` that called SerpApi and recorded a latency (cache hits are excluded). It describes those runs only, not all time.
+- `rank`: the newest rank snapshot compared with the one before it, exactly as in [Rank history](#rank-history): smaller is better, `null` rank means not found in the retrieved window (never 0), and snapshots from different search settings are `not_comparable`. `null` when the keyword has no snapshot (no target domain, or never searched).
 
 ### Endpoints
 
@@ -310,6 +326,8 @@ Turns a sentence into a **proposed plan**; nothing runs until the client confirm
 | `error_category` | One of the failure categories. Any other value is ignored. |
 | `keyword_id` | Digits only; anything else is ignored. |
 
+`meta.counts` is `{ all, queued, running, succeeded, failed }`: how many runs each status has under the `keyword_id` and `error_category` filters, **before** the `status` filter, so filter tabs can show their totals and the numbers do not change when a tab is chosen.
+
 ## Metrics
 
 `GET /api/v1/metrics/summary?window=24h` (`1h`, `24h` default, `7d`, or `30d`; anything else is 400) returns operational numbers computed from the runs table. It contains counts and timings only, never search terms, error text, or credentials.
@@ -317,6 +335,7 @@ Turns a sentence into a **proposed plan**; nothing runs until the client confirm
 | Section | Fields |
 |---|---|
 | `window` | `name, from, to` |
+| `series` | `bucket_seconds` and `buckets`: one entry per time slice of the window, oldest first, each `{ at, succeeded, cache_hit, failed, active }`. Slices without requests are included with zeros. Slice width: 5 min for `1h` (12 slices), 1 h for `24h` (24), 12 h for `7d` (14), 1 day for `30d` (30). A request counts in the slice of its creation time and in exactly one outcome: `failed`; `active` (queued or running); `cache_hit` (answered from the local cache); otherwise `succeeded` (answered by SerpApi). The slices add up to `requests.total`. |
 | `requests` | `total`, `by_status` (queued, running, succeeded, failed), `by_trigger` (manual, scheduled). Every search request is a run, cache hits included. |
 | `upstream` | `calls` (requests sent to SerpApi), `retries`, `runs_succeeded`, `runs_failed`, `success_rate` (`null` when nothing finished), `latency_ms: { samples, p50, p95, max }` (last attempt of each run) |
 | `cache` | `hits`, `misses` (requests that really went upstream), `hit_rate` (`null` without data), `ttl_seconds`. SerpApi's own cache is not observable and not included. |

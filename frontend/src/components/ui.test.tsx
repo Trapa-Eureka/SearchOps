@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
 import { renderApp } from "@/test/utils";
-import { ConfirmDialog, EmptyState, ErrorState, Field, Loading, Metric, Pagination } from "./ui";
+import { ConfirmDialog, EmptyState, ErrorState, Field, Loading, Metric, Pagination, Segmented } from "./ui";
 
 describe("Pagination", () => {
   const meta = (page: number, total_pages: number, total_count = 30) => ({ page, per_page: 10, total_count, total_pages });
@@ -120,5 +120,33 @@ describe("ConfirmDialog", () => {
   it("stays closed when open is false", () => {
     setup({ open: false });
     expect(document.querySelector("dialog")).not.toHaveAttribute("open");
+  });
+});
+
+describe("Segmented", () => {
+  const options = [{ value: "", label: "All", count: 1234 }, { value: "failed", label: "Failed", count: 5 }, { value: "queued", label: "Queued" }];
+
+  it("is a labelled group whose pressed button is the current choice", () => {
+    renderApp(<Segmented label="Show" value="failed" options={options} onChange={vi.fn()} />);
+
+    expect(screen.getByRole("group", { name: "Show" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Failed/ })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: /^All/ })).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("shows counts formatted for the locale, and none when not given", () => {
+    renderApp(<Segmented label="Show" value="" options={options} onChange={vi.fn()} />);
+
+    expect(screen.getByRole("button", { name: "All 1,234" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Queued" })).toBeInTheDocument();
+  });
+
+  it("reports the chosen value", async () => {
+    const onChange = vi.fn();
+    renderApp(<Segmented label="Show" value="" options={options} onChange={onChange} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /^Failed/ }));
+
+    expect(onChange).toHaveBeenCalledWith("failed");
   });
 });

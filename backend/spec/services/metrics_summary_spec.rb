@@ -33,6 +33,65 @@ RSpec.describe MetricsSummary, env: { "SEARCH_MAX_REQUESTS_PER_DAY" => "20", "SE
     end
   end
 
+  describe "series" do
+    let(:now) { Time.zone.parse("2026-10-26 12:00:00") }
+    let(:series) { described_class.call(window: "24h", now: now)[:series] }
+
+    it "has one slice per hour of a 24h window, oldest first, all zero when nothing ran" do
+      expect(series[:bucket_seconds]).to eq(3600)
+      expect(series[:buckets].size).to eq(24)
+      expect(series[:buckets].first[:at]).to eq(now - 24.hours)
+      expect(series[:buckets].last[:at]).to eq(now - 1.hour)
+      expect(series[:buckets]).to all(include("succeeded" => 0, "cache_hit" => 0, "failed" => 0, "active" => 0))
+    end
+
+    it "puts every run in the slice of its creation time and splits by outcome" do
+      run(created_at: now - 30.minutes)                                   # last slice, succeeded
+      run(created_at: now - 40.minutes, status: "failed", error_category: "timeout")
+      run(:cache_hit, created_at: now - 50.minutes, source_run: create(:search_run, created_at: now - 3.days))
+      run(:queued, created_at: now - 5.minutes)
+      run(created_at: now - 23.hours - 30.minutes)                        # first slice
+
+      buckets = series[:buckets]
+
+      expect(buckets.last).to include("succeeded" => 1, "failed" => 1, "cache_hit" => 1, "active" => 1)
+      expect(buckets.first).to include("succeeded" => 1)
+      expect(buckets[1..-2].sum { |bucket| bucket.values_at("succeeded", "failed", "cache_hit", "active").sum }).to eq(0)
+    end
+
+    it "adds up to the request total, so the chart and the tiles agree" do
+      run(created_at: now - 2.hours)
+      run(created_at: now - 3.hours, status: "failed", error_category: "auth")
+      run(:cache_hit, created_at: now - 4.hours, source_run: create(:search_run, created_at: now - 5.hours))
+
+      summary = described_class.call(window: "24h", now: now)
+      total = summary[:series][:buckets].sum { |bucket| bucket.values_at("succeeded", "failed", "cache_hit", "active").sum }
+
+      expect(total).to eq(summary[:requests][:total])
+    end
+
+    it "counts a run created exactly at the end of the window in the last slice" do
+      run(created_at: now)
+
+      expect(series[:buckets].last["succeeded"]).to eq(1)
+    end
+
+    it "uses a bucket width that suits each window" do
+      expect(described_class::BUCKET_SECONDS.keys).to match_array(described_class::WINDOWS.keys)
+      described_class::WINDOWS.each do |name, length|
+        result = described_class.call(window: name, now: now)[:series]
+        expect(result[:buckets].size).to eq(length.to_i / result[:bucket_seconds])
+        expect(result[:buckets].size).to be_between(12, 30)
+      end
+    end
+
+    it "ignores runs outside the window" do
+      run(created_at: now - 25.hours)
+
+      expect(series[:buckets].sum { |bucket| bucket["succeeded"] }).to eq(0)
+    end
+  end
+
   describe "upstream" do
     it "computes success rate, calls, retries, and latency percentiles" do
       [ 100, 200, 300, 400 ].each { |ms| run(upstream_latency_ms: ms, upstream_calls: 1, attempts: 1) }
