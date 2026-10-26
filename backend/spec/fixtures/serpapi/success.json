@@ -1,0 +1,11 @@
+{
+  "search_metadata": { "id": "fixture-success-1", "status": "Success" },
+  "search_information": { "organic_results_state": "Results for exact spelling" },
+  "organic_results": [
+    { "position": 1, "title": "React", "link": "https://react.dev/", "displayed_link": "https://react.dev", "snippet": "The library for web and native user interfaces." },
+    { "position": 2, "title": "React developer jobs", "link": "https://www.example.com/jobs/react", "displayed_link": "https://www.example.com › jobs › react", "snippet": "Find remote React roles." },
+    { "position": 3, "title": "React tips", "link": "https://blog.example.com/react-tips", "displayed_link": "https://blog.example.com › react-tips", "snippet": "Ten tips for React developers." },
+    { "position": 4, "title": "Look-alike domain", "link": "https://notexample.com/react", "displayed_link": "https://notexample.com › react", "snippet": "Not the target domain." },
+    { "position": 5, "title": "Wikipedia", "link": "https://en.wikipedia.org/wiki/React_(software)", "displayed_link": "https://en.wikipedia.org › wiki › React_(software)", "snippet": "React is a JavaScript library." }
+  ]
+}

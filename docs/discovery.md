@@ -137,3 +137,14 @@ Still unverified: `serpapi` gem compatibility with Ruby 4.0.3 (Stage 3), Laya HT
 - `Keyword` stores `country` (SerpApi `gl`) and `language` (`hl`) instead of a single `locale` column, because both parameters are documented separately by SerpApi.
 - Only `engine=google` is allowed until a provider implements another engine. The planner contract in `CLAUDE.md` mentions `google_jobs`; it is added to the allow-list when its provider support and fields are verified.
 - Authentication is intentionally not implemented yet. This is a Stage 8 prerequisite before any public exposure.
+
+## 11. Stage 3 update (2026-10-26)
+
+Resolved from the open items in sections 3 and 5:
+- **Error format (confirmed from https://serpapi.com/api-status-and-error-codes):** body `{"error": "<message>"}`. 400 missing parameter, 401 invalid key, 403 forbidden, 404 not found, 429 hourly throughput limit **or** exhausted searches (told apart only by the message), 500/503 server error. Empty results are HTTP 200 with `search_metadata.status` `Success` and `error` "Google hasn't returned any results for this query." `search_metadata.status` values: `Queued`, `Processing`, `Success`, `Error`.
+- **Not documented, so not relied on:** `Retry-After`, the hourly limit's value or message text, HTTP 408, any "cached" indicator in the response.
+- **Quota check:** Account API `GET https://serpapi.com/account.json?api_key=...` returns `searches_per_month`, `plan_searches_left`, `total_searches_left`, `this_month_usage`, `this_hour_searches`, `account_rate_limit_per_hour`, and is free (not counted toward the quota). It is not wired in yet; Stage 4 can use it to read the real budget instead of trusting `SEARCH_MAX_REQUESTS_PER_DAY`.
+- **`serpapi` gem 1.0.3 (source read, not adopted):** loads on Ruby 4.0.3 only if its HTTP.rb dependency installs. Its persistent mode (the default) does not apply the `timeout` option, and it raises on any top-level `error`, which would turn SerpApi's empty-result response into a failure. Decision: a small `Net::HTTP` adapter with explicit timeouts (assumption 2 resolved).
+- **Real-world check:** one call with a deliberately invalid key against the live endpoint returned HTTP 401 with the documented body, which confirms TLS, the request format, and the 401 classification. No quota was used and no real credential was sent.
+- **Still not run:** a live search with a real key (needs a key and approval to use quota). All search fixtures are hand-written from documented fields.
+- Two real defects were found by tests while building this stage and fixed: `NUL` bytes reached a uniqueness query (Stage 2), and a rolled-back result record was re-inserted through has_many autosave when the failed run was saved (orchestrator now reloads the run before recording a failure).

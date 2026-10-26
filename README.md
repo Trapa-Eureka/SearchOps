@@ -2,7 +2,7 @@
 
 **English** · [Korean](README.ko.md)
 
-> **Status: Stage 2 (domain model and keyword CRUD) is complete: schema, validations, and `/api/v1/keywords` are implemented and tested. SerpApi search is not implemented yet.**
+> **Status: Stage 3 (SerpApi integration) is complete: searches run through SerpApi, are stored as snapshots, and rank changes are tracked. Verified with fixtures and mocked HTTP only; a live search with a real key has not been run yet. Scheduling, caching, and retries come in Stage 4.**
 > The checklist below defines what must be answerable with "yes" when the project is finished. An item is marked `[x]` only once it is implemented.
 
 SearchOps runs keyword searches through [SerpApi](https://serpapi.com), stores the results as snapshots, tracks **rank changes for a target domain**, and monitors **latency, errors, cache hits, and usage** of the upstream API. The goal is to learn Ruby/Rails by building a service with production-minded concerns: reliability, observability, and testing.
@@ -47,10 +47,10 @@ Security boundary: the frontend talks only to Rails, and only Rails calls upstre
 
 | # | Question | Planned approach | Stage | Status |
 |---|----------|------------------|-------|--------|
-| 1 | Are **successful, error, and empty** API responses each handled? | Handle missing or empty `organic_results`; detect error payloads even on HTTP 200; classify auth, quota, rate-limit, transient network, timeout, invalid request, and unexpected schema errors; one fixture test per case | 3 | [ ] |
+| 1 | Are **successful, error, and empty** API responses each handled? | Handle missing or empty `organic_results`; detect error payloads even on HTTP 200; classify auth, quota, rate-limit, transient network, timeout, invalid request, and unexpected schema errors; one fixture test per case | 3 | [x] |
 | 2 | Does the service keep working when the search API is **slow or failing**? | Connect/read timeouts; retry only transient errors with capped exponential backoff and jitter (respect `Retry-After`); on final failure keep the last successful snapshot, **marked stale**; never retry invalid credentials or malformed requests | 4 | [ ] |
 | 3 | Are **duplicate search requests prevented** and **usage managed**? | Idempotent jobs keyed by a fingerprint of normalized query + engine + locale + settings + time window; block concurrent duplicate runs; cache TTL with `cache_hit` tracking; daily request budget and concurrency limits (quota read from the account/docs, never hardcoded) | 4 | [ ] |
-| 4 | Is **rank change** computed accurately? | Canonicalize hostnames, define and test exact vs. subdomain matching; absent rank is `NULL` ("not found in retrieved window"), never 0; compare only snapshots with equivalent search settings; lower number = better position | 3 | [ ] |
+| 4 | Is **rank change** computed accurately? | Canonicalize hostnames, define and test exact vs. subdomain matching; absent rank is `NULL` ("not found in retrieved window"), never 0; compare only snapshots with equivalent search settings; lower number = better position | 3 | [x] |
 | 5 | Is the core logic **tested with RSpec** (or similar)? | Unit tests for normalizer, domain matching, rank delta, fingerprint, plan validator, and budget rules; request/integration tests; provider adapter tests (success, empty, 4xx, 429, 5xx, timeout, malformed JSON); Laya adapter tests (unsupported intent, prompt injection, timeout, disabled) | all, 7 | [ ] |
 | 6 | Can **execution time and failure causes** be inspected in logs? | `SearchRun` stores start/end, upstream latency, error category, and cache source; structured logs; p50/p95, success/failure counts, errors by category, cache hit rate, and upstream call count via `/api/v1/metrics/summary`; search terms and secrets minimized in logs | 4 | [ ] |
 | 7 | Does the core flow work **without Laya**? | With `LAYA_ENABLED=false`: add keyword, search, snapshot, compare, and scheduled checks all work; natural language returns only a safe fallback (clarification request) | 5 | [ ] |
@@ -78,8 +78,8 @@ After each stage, a summary and a proposed commit message are produced, and the 
 |-------|---------|--------|
 | 0 | Discovery and baseline (`docs/discovery.md`) | Done |
 | 1 | Ruby/Rails basics, Rails API scaffold, `/health` | Done |
-| 2 | Domain model, REST API (keyword CRUD) | Done, awaiting confirmation |
-| 3 | SerpApi integration, normalization, rank tracking | Pending |
+| 2 | Domain model, REST API (keyword CRUD) | Done |
+| 3 | SerpApi integration, normalization, rank tracking | Done, awaiting confirmation |
 | 4 | Scheduled jobs, caching, resilience, metrics | Pending |
 | 5 | Laya pre-classifier integration | Pending |
 | 6 | Next.js dashboard | Pending |
@@ -108,7 +108,8 @@ bin/rails server              # then: curl localhost:3000/health
 
 ## API
 
-Stage 2 provides keyword CRUD under `/api/v1/keywords` (validation, normalization, pagination, a shared JSON error format). Full contract, data model, and known limitations: [docs/api-contract.md](docs/api-contract.md). There is no authentication yet, so run it locally only.
+Keyword CRUD under `/api/v1/keywords`, `POST/GET /api/v1/keywords/:id/searches` to run and list searches, and `GET /api/v1/keywords/:id/rank_history`, with validation, pagination, and a shared JSON error format. Full contract, data model, and known limitations: [docs/api-contract.md](docs/api-contract.md). 
+To run a real search, put your SerpApi key in `backend/.env` as `SERPAPI_API_KEY` and restart the server. Each search is one SerpApi request (cached ones are free on SerpApi's side), and `SEARCH_MAX_REQUESTS_PER_DAY` limits runs per day. There is no authentication yet, so run it locally only.
 
 ## Configuration
 
