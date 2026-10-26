@@ -204,3 +204,13 @@ The first dashboard worked but looked generic: every region was the same rounded
 - **Not done, on purpose:** no real SerpApi measurement (no quota used), no load or concurrency test, no change to the classifier or rules after seeing the held-out result. Hypotheses for improving them are listed in benchmarks.md and need a new held-out set.
 - **Environment note for the next person:** `bundle exec` prints rdoc "already initialized constant" warnings on this machine (two rdoc versions); they are harmless. Bootsnap's compile cache can hide a same-length edit made within the same second, which matters only for mutation testing (set `DISABLE_BOOTSNAP=1`).
 
+## 17. Checklist audit (2026-10-26)
+
+Each row of the README quality checklist was re-checked against the code and the specs, not against the plan text.
+
+- **Rows 1, 2, 4, 5, 7, 8: confirmed** with specific specs (error categories and fixtures, backoff with jitter and cap, `Retry-After`, stale marking, subdomain-versus-look-alike matching, plan and confirmation rules, the end-to-end journeys).
+- **Row 3: wording corrected.** The fingerprint covers query, engine, locale, and location. It does not contain a time window, as the plan text said; the window is the cache TTL, and duplicates among queued or running runs are blocked by a unique index. The concurrency limit is checked as configuration (limit 2, one shared key); enforcing it is Solid Queue's job and is not exercised by a spec.
+- **Row 6: a real defect, fixed.** The Rails request log printed every sentence given to the planner and every keyword, target domain, and location in clear text (`Parameters: {"text" => ...}`), and the SQL log printed the same values, including inside the JSON columns of plans and run metadata. This contradicted the checklist row and the claim in `api-contract.md` that sentences are never logged. It was reproduced first with a failing spec (4 of 5 examples), then fixed by extending `config.filter_parameters`, which Rails also applies to SQL values and `inspect`. Production logs at `info` would have carried the parameters line but not the SQL; the development and test logs carried both. 5 new specs; 863 in all.
+- **Still true after the fix:** an exception message that quotes a database value (a unique-key violation names the key) can carry a search term if such an error is ever logged. Handled errors in this app are not logged that way today, but there is no spec for every path.
+- **Not exercised by specs:** that Solid Queue really enforces `limits_concurrency` (it needs a running worker), and a load test of any kind.
+

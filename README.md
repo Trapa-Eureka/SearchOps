@@ -2,7 +2,7 @@
 
 **English** · [Korean](README.ko.md)
 
-> **Status: Stage 7 (tests, A/B/C comparison, benchmarks) is complete: 858 backend specs (95.9% of lines, 91.3% of branches covered) including 15 end-to-end journeys, 358 frontend tests, and a comparison of structured search, natural language through Laya, and Laya down on a seeded fake provider (no SerpApi call was made). On 80 fresh held-out sentences Laya's intent accuracy is **71%** (Korean 47%), one confident answer in five is wrong, and natural language adds about 85 ms per task while completing no task the form cannot; a Laya that hangs costs 4 s per sentence. Details: [docs/benchmarks.md](docs/benchmarks.md), [docs/intent-eval.md](docs/intent-eval.md). `job_search` is understood but cannot run yet (no `google_jobs` engine).**
+> **Status: Stage 7 (tests, A/B/C comparison, benchmarks) is complete: 863 backend specs (95.9% of lines, 91.3% of branches covered) including 15 end-to-end journeys, 358 frontend tests, and a comparison of structured search, natural language through Laya, and Laya down on a seeded fake provider (no SerpApi call was made). On 80 fresh held-out sentences Laya's intent accuracy is **71%** (Korean 47%), one confident answer in five is wrong, and natural language adds about 85 ms per task while completing no task the form cannot; a Laya that hangs costs 4 s per sentence. Details: [docs/benchmarks.md](docs/benchmarks.md), [docs/intent-eval.md](docs/intent-eval.md). `job_search` is understood but cannot run yet (no `google_jobs` engine).**
 > The checklist below defines what must be answerable with "yes" when the project is finished. An item is marked `[x]` only once it is implemented.
 
 SearchOps runs keyword searches through [SerpApi](https://serpapi.com), stores the results as snapshots, tracks **rank changes for a target domain**, and monitors **latency, errors, cache hits, and usage** of the upstream API. The goal is to learn Ruby/Rails by building a service with production-minded concerns: reliability, observability, and testing.
@@ -49,10 +49,10 @@ Security boundary: the frontend talks only to Rails, and only Rails calls upstre
 |---|----------|------------------|-------|--------|
 | 1 | Are **successful, error, and empty** API responses each handled? | Handle missing or empty `organic_results`; detect error payloads even on HTTP 200; classify auth, quota, rate-limit, transient network, timeout, invalid request, and unexpected schema errors; one fixture test per case | 3 | [x] |
 | 2 | Does the service keep working when the search API is **slow or failing**? | Connect/read timeouts; retry only transient errors with capped exponential backoff and jitter (respect `Retry-After`); on final failure keep the last successful snapshot, **marked stale**; never retry invalid credentials or malformed requests | 4 | [x] |
-| 3 | Are **duplicate search requests prevented** and **usage managed**? | Idempotent jobs keyed by a fingerprint of normalized query + engine + locale + settings + time window; block concurrent duplicate runs; cache TTL with `cache_hit` tracking; daily request budget and concurrency limits (quota read from the account/docs, never hardcoded) | 4 | [x] |
+| 3 | Are **duplicate search requests prevented** and **usage managed**? | Idempotent jobs keyed by a fingerprint of normalized query + engine + locale + location (the time window is the cache TTL, not part of the fingerprint); block concurrent duplicate runs; cache TTL with `cache_hit` tracking; daily request budget and concurrency limits (quota read from the account/docs, never hardcoded) | 4 | [x] |
 | 4 | Is **rank change** computed accurately? | Canonicalize hostnames, define and test exact vs. subdomain matching; absent rank is `NULL` ("not found in retrieved window"), never 0; compare only snapshots with equivalent search settings; lower number = better position | 3 | [x] |
 | 5 | Is the core logic **tested with RSpec** (or similar)? | Unit tests for normalizer, domain matching, rank delta, fingerprint, plan validator, and budget rules; request/integration tests; provider adapter tests (success, empty, 4xx, 429, 5xx, timeout, malformed JSON); Laya adapter tests (unsupported intent, prompt injection, timeout, disabled) | all, 7 | [x] |
-| 6 | Can **execution time and failure causes** be inspected in logs? | `SearchRun` stores start/end, upstream latency, error category, and cache source; structured logs; p50/p95, success/failure counts, errors by category, cache hit rate, and upstream call count via `/api/v1/metrics/summary`; search terms and secrets minimized in logs | 4 | [x] |
+| 6 | Can **execution time and failure causes** be inspected in logs? | `SearchRun` stores start/end, upstream latency, error category, and cache source; structured logs; p50/p95, success/failure counts, errors by category, cache hit rate, and upstream call count via `/api/v1/metrics/summary`; search terms, sentences, and secrets kept out of logs (request parameters and SQL values are filtered; `spec/requests/logging_spec.rb`) | 4 | [x] |
 | 7 | Does the core flow work **without Laya**? | With `LAYA_ENABLED=false`: add keyword, search, snapshot, compare, and scheduled checks all work; natural language returns only a safe fallback (clarification request) | 5 | [x] |
 | 8 | Is a natural-language plan **validated and confirmed** before it runs? | Allow-list of known fields; no arbitrary search on low confidence or invalid output; costly or broad searches require user confirmation | 5 | [x] |
 
@@ -111,7 +111,7 @@ bin/rails server              # API + background worker (Solid Queue runs inside
 
 ```bash
 cd backend
-bundle exec rspec                       # 858 examples, about 14 s; includes spec/e2e (whole journeys through the API)
+bundle exec rspec                       # 863 examples, about 14 s; includes spec/e2e (whole journeys through the API)
 COVERAGE=1 bundle exec rspec            # line and branch coverage in coverage/index.html
 cd ../frontend && pnpm test             # 358 tests
 

@@ -192,7 +192,7 @@ Listed so nobody mistakes them for results.
 
 ## Test suite
 
-`bundle exec rspec`: 858 examples, 0 failures (about 14 seconds); RuboCop and Brakeman clean. `COVERAGE=1 bundle exec rspec`: 95.9% of lines (1864/1943) and 91.3% of branches (597/654), including the benchmark library and excluding the Rake tasks. 15 end-to-end examples (`spec/e2e`) drive whole journeys through the public API with real controllers and jobs and only HTTP stubbed:
+`bundle exec rspec`: 863 examples, 0 failures (about 14 seconds); RuboCop and Brakeman clean. `COVERAGE=1 bundle exec rspec`: 95.9% of lines (1864/1943) and 91.3% of branches (597/654), including the benchmark library and excluding the Rake tasks. 15 end-to-end examples (`spec/e2e`) drive whole journeys through the public API with real controllers and jobs and only HTTP stubbed:
 
 - Mode A: add a keyword, search, snapshot, compare (smaller is better, a drop out of the window is "not found" and never rank 0), dashboard data, cache reuse, outage that keeps the last good result and marks it stale, a bad key that is not retried, the daily budget.
 - Mode B: plan, confirm, run; completing a plan the sentence left incomplete; the budget cannot be bypassed through a plan (nothing is created when confirming is refused); instructions hidden in a sentence are text: nothing is deleted or repeated, and unknown fields in the confirmation are refused.

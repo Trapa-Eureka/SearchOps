@@ -300,7 +300,7 @@ Turns a sentence into a **proposed plan**; nothing runs until the client confirm
 - Laya's answer is a label and numbers, validated against the known labels; anything else counts as an outage.
 - A wrong classification can end at most as a read-only history view, or a rank check the user confirmed, counted against the budget. Prompt-injection sentences were tested with a classifier forced to answer with full confidence for every intent.
 - The user's keyword and domain are not sent to Laya. The Laya address is an operator setting and never comes from a request.
-- The sentence is stored only in `intent_requests.original_text`, never logged (log lines carry ids, outcome, intent, confidence, reason, and timings), never returned, and deleted after `INTENT_RETENTION_DAYS` (default 30) by `PurgeIntentRequestsJob`. Keywords and runs created by a confirmed plan do not reference the sentence and stay.
+- The sentence is stored only in `intent_requests.original_text`, kept out of the log (our own log lines carry ids, outcome, intent, confidence, reason, and timings; and Rails' request and SQL logging filters the sentence, the search terms, the target domain, the location, and the JSON columns that copy them: `config/initializers/filter_parameter_logging.rb`, checked by `spec/requests/logging_spec.rb`). This was not true until Stage 7: the request log used to print every sentence and keyword in clear text. A database error that quotes a value (for example a unique-key violation) can still carry one if such an error is logged, never returned, and deleted after `INTENT_RETENTION_DAYS` (default 30) by `PurgeIntentRequestsJob`. Keywords and runs created by a confirmed plan do not reference the sentence and stay.
 
 ## Options (for clients)
 
