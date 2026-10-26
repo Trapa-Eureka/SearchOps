@@ -11,6 +11,10 @@ Rails.application.routes.draw do
     namespace :v1 do
       get "metrics/summary", to: "metrics#summary"
 
+      post "intent/plan", to: "intents#plan"
+      get "intent/plan/:id", to: "intents#show"
+      post "intent/plan/:id/confirm", to: "intents#confirm"
+
       resources :keywords, only: %i[index show create update destroy] do
         resources :searches, only: %i[index show create]
         resource :rank_history, only: :show, controller: "rank_histories"

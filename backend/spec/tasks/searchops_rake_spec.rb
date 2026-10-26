@@ -35,12 +35,16 @@ RSpec.describe "rake searchops:serpapi_quota" do
     expect { capture_stdout { task.invoke } }.to raise_error(SystemExit)
   end
 
+  # Captures stdout and silences stderr (abort prints its message there).
   def capture_stdout
-    original = $stdout
+    original_out = $stdout
+    original_err = $stderr
     $stdout = StringIO.new
+    $stderr = StringIO.new
     yield
     $stdout.string
   ensure
-    $stdout = original
+    $stdout = original_out
+    $stderr = original_err
   end
 end

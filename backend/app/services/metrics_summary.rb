@@ -17,7 +17,8 @@ class MetricsSummary
         errors: runs.where(status: "failed").group(:error_category).count,
         budget: budget,
         keywords: keywords(now),
-        queue: queue(now)
+        queue: queue(now),
+        intent: intent(from, now)
       }
     end
 
@@ -80,6 +81,30 @@ class MetricsSummary
         stale: freshness.count(&:stale?),
         no_data: freshness.count { |info| info.state == "no_data" }
       }
+    end
+
+    # Natural-language planning. Counts and timings only: the sentences are never included.
+    def intent(from, now)
+      requests = IntentRequest.where(created_at: from..now)
+      by_outcome = requests.group(:outcome).count
+      laya_ms = requests.where("analysis ? 'laya_latency_ms'").pluck(Arel.sql("(analysis->>'laya_latency_ms')::int")).sort
+
+      {
+        enabled: Intent::Config.enabled?,
+        requests: requests.count,
+        by_outcome: IntentRequest::OUTCOMES.index_with { |outcome| by_outcome.fetch(outcome, 0) },
+        fallbacks: requests.where.not(fallback_reason: nil).group(:fallback_reason).count,
+        laya_latency_ms: { samples: laya_ms.size, p50: percentile(laya_ms, 0.5), p95: percentile(laya_ms, 0.95), max: laya_ms.last }
+      }
+    end
+
+    def percentile(sorted, fraction)
+      return nil if sorted.empty?
+
+      position = fraction * (sorted.size - 1)
+      lower = sorted[position.floor]
+      upper = sorted[position.ceil]
+      (lower + ((upper - lower) * (position - position.floor))).round
     end
 
     # Job status as seen from the runs, plus whether any worker is alive to process them.

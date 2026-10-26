@@ -1,6 +1,6 @@
 # API Contract (v1)
 
-Status after Stage 4: keyword CRUD, asynchronous searches through SerpApi (with caching, de-duplication, retries, and scheduled checks), run listing, rank history, and a metrics summary. The intent plan endpoint is added in Stage 5.
+Status after Stage 4: keyword CRUD, asynchronous searches through SerpApi (with caching, de-duplication, retries, and scheduled checks), run listing, rank history, and a metrics summary. Stage 5 adds optional natural-language planning (`/intent/plan`).
 
 Base path: `/api/v1`. Format: JSON. **No authentication yet**: the API is for local development only and must not be exposed publicly until Stage 8 adds authentication, CORS, and HTTPS.
 
@@ -226,6 +226,66 @@ The API key is read from the environment on the server, sent only to the fixed `
 
 The settings fingerprint (`SearchFingerprint`) is a SHA-256 of engine, query, country, language, and location, with the query and location case-folded. The target domain is not part of it; it is compared separately.
 
+## Natural-language planning (optional)
+
+Turns a sentence into a **proposed plan**; nothing runs until the client confirms. It is optional in every sense: with `LAYA_ENABLED=false` (the default), or when Laya is down, these endpoints still answer with a structured-input fallback, and keywords, searches, scheduled checks, rank history, and metrics are unaffected. How the classifier is called and how well it works: [laya-contract.md](laya-contract.md) and [intent-eval.md](intent-eval.md).
+
+| Method and path | Success | Notes |
+|---|---|---|
+| `POST /intent/plan` | 201 `{ data }` + `Location` | Body `{ "text": "..." }`. Always 201 when the text is acceptable, whatever `data.status` says. |
+| `GET /intent/plan/:id` | 200 `{ data }` | Read a stored plan again. |
+| `POST /intent/plan/:id/confirm` | 200 `{ data }` | Optional body `{ "plan": { ...edits... } }`. Carries the plan out through the normal keyword and search path. |
+
+`text` must be a string of 1 to 500 characters after whitespace is squished, without control characters; otherwise 422 `invalid_text` with `details: { text: "text_required" | "text_must_be_a_string" | "text_too_long" | "text_has_control_characters" }` and nothing is stored. `POST /intent/plan` is limited to 30 requests per minute per IP (429 `rate_limited`; the counter is per process).
+
+### How a sentence becomes a plan
+
+1. Rules extract what Laya cannot: country (and its main language), a target domain, and quoted keyword candidates (`Intent::Extractor`). Country and domain are never guessed: two different values are reported as ambiguous.
+2. The keyword and domain are masked in the sentence (`KEYWORD`, `DOMAIN`) and Laya classifies the rest into one of `organic_rank_tracking`, `job_search`, `search_history`, `unsupported`, with a probability for each.
+3. Below `LAYA_MIN_CONFIDENCE` (default 0.7) nothing is proposed, only a clarification with the two likeliest intents. `unsupported` above the threshold is reported as out of scope.
+4. Otherwise a plan is built and checked by a strict validator (`Intent::PlanValidator`): the field set is closed, unknown fields are rejected, codes come from allow-lists, domains must be safe hostnames, flags must be real booleans. There is no field that could express a delete, an export, an engine override, or a repeat count.
+5. `compare_previous` and `only_new` come from word lists (English, Korean, Japanese, and the local wording of the evaluation languages), not from Laya.
+
+### The response
+
+`data`: `id, status, reason, next_step, plan, requires_confirmation, missing, errors, fields, candidates, keyword_candidates, query_suggestions, history, notes, classifier, structured_input, execution, created_at, confirmed_at`. The original sentence is **not** returned.
+
+| `status` | `reason` | Meaning | `next_step` |
+|---|---|---|---|
+| `ready` | | A complete, valid plan awaiting confirmation. | `confirm` |
+| `needs_clarification` | `low_confidence` | The classifier was not sure. `plan` is `null`; `candidates` lists the two likeliest intents. | `rephrase_or_use_structured_input` |
+| `needs_clarification` | `missing_fields` | Understood, but `missing` fields could not be found (`query`, `country`, `language`, `target_domain`). `query_suggestions` may help. | `complete_fields` (send them in `plan` when confirming) |
+| `needs_clarification` | `ambiguous_keyword` / `keyword_not_found` | A history request matched several tracked keywords (`keyword_candidates`) or none. | `complete_fields` |
+| `needs_clarification` | `invalid_fields` | An extracted value failed validation (`errors`). | `complete_fields` |
+| `unsupported` | `out_of_scope` | Understood as something this app does not do. | `none` |
+| `unsupported` | `engine_not_available` | A `job_search` plan: understood and kept in `plan` (engine `google_jobs`), but that engine is not implemented, so it cannot be confirmed. | `none` |
+| `unavailable` | `laya_disabled` or `classifier_<timeout, unavailable, busy, auth, bad_request, server_error, invalid_response>` | Laya is off or failed; nothing was understood. `structured_input.prefill` still holds what the rules found. | `use_structured_input` |
+| `executed` | | Confirmed and carried out; see `execution`. | `none` |
+
+- `plan` keys: `intent, engine, query, country, language, location, target_domain, keyword_id, compare_previous, only_new` (only those that apply). `engine` is derived from the intent.
+- `fields` says where each value came from: `{ source: "laya" | "rule" | "missing" | "default", evidence, confidence }`. For example the intent is `laya` with its probability, the country is `rule` with the matched word, and a flag is `rule` when a cue matched.
+- `classifier`: `{ name, enabled, version, intent, confidence, probabilities, min_confidence, latency_ms }`. `version` is `laya:<checkpoint>@<LAYA_VERSION_LABEL>`.
+- `history` (when `compare_previous` is on): `{ keyword_id, snapshots }`; `notes` contains `baseline_only` when no earlier snapshot exists, so only a baseline can be created now. Nothing is fabricated for a missing last week.
+- `structured_input`: `{ endpoint: "/api/v1/keywords", fields, prefill }`, present for every status that is not `ready`, `executed`, or `unsupported`: the way to do the same thing without the classifier.
+- `requires_confirmation` is true for `organic_rank_tracking` (it can start a search). `search_history` is read-only.
+
+### Confirming
+
+`POST /intent/plan/:id/confirm` first checks the SerpApi key is configured for rank checks (503 `search_provider_not_configured`), then:
+
+- merges the optional `plan` edits (`query, country, language, location, target_domain, compare_previous, only_new` and `keyword_id`) into the stored plan and **validates the whole plan again**. The intent cannot be changed. Unknown fields, bad values, and missing fields give 422 `invalid_plan` with `details: { errors, missing }`.
+- `organic_rank_tracking`: finds or creates the keyword (same limits and uniqueness as the keyword API) and calls the normal search path, so caching, de-duplication, the daily budget, and retries all apply. `execution` is `{ kind: "search", keyword_id, keyword_created, run_id, search_outcome }` where `search_outcome` is `enqueued`, `deduplicated`, or `cache_hit`. Poll the run as usual.
+- `search_history`: `execution` is `{ kind: "history", keyword_id }` (`null` means all keywords). No search is made.
+- A request with nothing to confirm (low confidence, out of scope, unavailable) gives 422 `not_confirmable` with `details.reason` `no_plan_to_confirm`; a job search gives `engine_not_available`.
+- Idempotent: confirming again returns the first result without searching again. If the daily budget is spent (429 `search_budget_exceeded`) the plan stays unconfirmed and can be confirmed later. The classifier is never called when confirming.
+
+### Safety properties (each covered by specs)
+
+- Laya's answer is a label and numbers, validated against the known labels; anything else counts as an outage.
+- A wrong classification can end at most as a read-only history view, or a rank check the user confirmed, counted against the budget. Prompt-injection sentences were tested with a classifier forced to answer with full confidence for every intent.
+- The user's keyword and domain are not sent to Laya. The Laya address is an operator setting and never comes from a request.
+- The sentence is stored only in `intent_requests.original_text`, never logged (log lines carry ids, outcome, intent, confidence, reason, and timings), never returned, and deleted after `INTENT_RETENTION_DAYS` (default 30) by `PurgeIntentRequestsJob`. Keywords and runs created by a confirmed plan do not reference the sentence and stay.
+
 ## Metrics
 
 `GET /api/v1/metrics/summary?window=24h` (`1h`, `24h` default, `7d`, or `30d`; anything else is 400) returns operational numbers computed from the runs table. It contains counts and timings only, never search terms, error text, or credentials.
@@ -239,6 +299,7 @@ The settings fingerprint (`SearchFingerprint`) is a SHA-256 of engine, query, co
 | `errors` | Failed runs by `error_category` |
 | `budget` | `daily_limit, used_today, remaining_today` |
 | `keywords` | `total, active, scheduled, stale, no_data` |
+| `intent` | `enabled`, `requests`, `by_outcome`, `fallbacks` (by reason), `laya_latency_ms: { samples, p50, p95, max }`. Counts and timings only, never sentences. |
 | `queue` | `queued, running, oldest_queued_age_seconds, workers_alive`. `workers_alive` is the number of Solid Queue workers with a recent heartbeat; `0` while runs stay queued means no worker is processing. |
 
 Structured log lines (no search terms or credentials) are written for each step: `search_enqueued`, `search_deduplicated`, `search_cache_hit`, `search_attempt` (outcome, error category, HTTP status, latency), `search_retry` (delay), `search_failed`, `schedule_tick`, `schedule_budget_exhausted`, `reap_stuck_runs`.
@@ -251,14 +312,15 @@ Structured log lines (no search terms or credentials) are written for each step:
 | `search_runs` | One search request: fingerprint, status, trigger, attempts, upstream calls, timings, error category, cache source and source run, request metadata | FK to keyword. Partial unique index on `(keyword_id, fingerprint)` for `queued`/`running` rows. Counters are non-negative (CHECK). |
 | `search_results` | Normalized organic results of a run | Unique `(search_run_id, position)`, `position >= 1`, `extra` JSON bounded to 4 KB |
 | `rank_snapshots` | Target-domain rank per run | One per run, `rank` is `NULL` when not found and `>= 1` otherwise (never 0) |
-| `intent_requests` | Natural-language requests and outcomes | Used from Stage 5, original text retention policy to be decided then |
+| `intent_requests` | Natural-language requests: sentence (purged after the retention period), plan, outcome, analysis, execution | Outcome is one of planned, needs_clarification, unsupported, unavailable, executed |
 | `solid_queue_*` | Job storage of Solid Queue (Active Job backend) | Created by a migration in the primary database; no Redis needed |
 
-`intent_requests` is not used until Stage 5.
+
 
 ## Known limitations
 
-- No authentication or per-client rate limiting (local use only until Stage 8).
+- No authentication, and rate limiting only on `POST /intent/plan` (per process, per IP). Local use only until Stage 8.
+- Natural-language planning: intent accuracy is 74 to 77% on small, author-labeled sets (Korean 62 to 64%), and most sentences end in a clarification, not a ready plan. `job_search` cannot be confirmed because its engine is not implemented. See [intent-eval.md](intent-eval.md).
 - The daily budget check is not atomic, so simultaneous requests can overshoot it slightly. Queued runs reserve a call, which narrows but does not remove the gap.
 - The cache is per keyword. Two keywords with identical search settings (different target domains only) do not share results.
 - Retried runs report the latency of the last attempt only.

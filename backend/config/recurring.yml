@@ -7,6 +7,9 @@ default: &default
   reap_stuck_runs:
     class: ReapStuckRunsJob
     schedule: every 5 minutes
+  purge_intent_requests:
+    class: PurgeIntentRequestsJob
+    schedule: every day at 3am
 
 development:
   <<: *default

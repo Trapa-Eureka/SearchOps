@@ -2,7 +2,7 @@
 
 **English** · [Korean](README.ko.md)
 
-> **Status: Stage 4 (jobs, cache, retries, metrics) is complete: searches run in a background worker with a local cache, de-duplication, a daily budget, capped retries, scheduled checks, stale-data marking, and a metrics summary. Verified with 427 specs, plus a live run of the real job queue against a deliberately invalid key; a successful live search was verified in Stage 3, but the retry path has only been exercised with mocked HTTP.**
+> **Status: Stage 5 (Laya intent pre-classifier) is complete: a natural-language sentence becomes a validated, confirmable plan, and everything works without Laya. Verified with 713 specs and against a real local Laya server. Accuracy is modest (intent 74 to 77% on small author-labeled sets, Korean 62 to 64%), so most sentences end in a clarification rather than a ready plan; see [docs/intent-eval.md](docs/intent-eval.md). `job_search` is understood but cannot run yet (no `google_jobs` engine).**
 > The checklist below defines what must be answerable with "yes" when the project is finished. An item is marked `[x]` only once it is implemented.
 
 SearchOps runs keyword searches through [SerpApi](https://serpapi.com), stores the results as snapshots, tracks **rank changes for a target domain**, and monitors **latency, errors, cache hits, and usage** of the upstream API. The goal is to learn Ruby/Rails by building a service with production-minded concerns: reliability, observability, and testing.
@@ -53,8 +53,8 @@ Security boundary: the frontend talks only to Rails, and only Rails calls upstre
 | 4 | Is **rank change** computed accurately? | Canonicalize hostnames, define and test exact vs. subdomain matching; absent rank is `NULL` ("not found in retrieved window"), never 0; compare only snapshots with equivalent search settings; lower number = better position | 3 | [x] |
 | 5 | Is the core logic **tested with RSpec** (or similar)? | Unit tests for normalizer, domain matching, rank delta, fingerprint, plan validator, and budget rules; request/integration tests; provider adapter tests (success, empty, 4xx, 429, 5xx, timeout, malformed JSON); Laya adapter tests (unsupported intent, prompt injection, timeout, disabled) | all, 7 | [ ] |
 | 6 | Can **execution time and failure causes** be inspected in logs? | `SearchRun` stores start/end, upstream latency, error category, and cache source; structured logs; p50/p95, success/failure counts, errors by category, cache hit rate, and upstream call count via `/api/v1/metrics/summary`; search terms and secrets minimized in logs | 4 | [x] |
-| 7 | Does the core flow work **without Laya**? | With `LAYA_ENABLED=false`: add keyword, search, snapshot, compare, and scheduled checks all work; natural language returns only a safe fallback (clarification request) | 5 | [ ] |
-| 8 | Is a natural-language plan **validated and confirmed** before it runs? | Allow-list of known fields; no arbitrary search on low confidence or invalid output; costly or broad searches require user confirmation | 5 | [ ] |
+| 7 | Does the core flow work **without Laya**? | With `LAYA_ENABLED=false`: add keyword, search, snapshot, compare, and scheduled checks all work; natural language returns only a safe fallback (clarification request) | 5 | [x] |
+| 8 | Is a natural-language plan **validated and confirmed** before it runs? | Allow-list of known fields; no arbitrary search on low confidence or invalid output; costly or broad searches require user confirmation | 5 | [x] |
 
 ## Scope
 
@@ -68,7 +68,7 @@ Security boundary: the frontend talks only to Rails, and only Rails calls upstre
 - Jobs: Active Job on Solid Queue (stored in the same PostgreSQL database, no Redis), with recurring tasks for scheduled checks
 - Search: SerpApi, via the official Ruby client if verified compatible, otherwise a small HTTPS adapter with explicit timeouts
 - Frontend: Next.js, React, TypeScript, Tailwind
-- Intent classification (optional): Laya, isolated behind a `LayaClassifier` interface (findings in [docs/discovery.md](docs/discovery.md))
+- Intent classification (optional): Laya (`multilingual` checkpoint) running locally as `laya-serve`, behind `Intent::LayaClassifier`. Contract and what was verified: [docs/laya-contract.md](docs/laya-contract.md). Measured accuracy: [docs/intent-eval.md](docs/intent-eval.md)
 
 ## Roadmap
 
@@ -80,8 +80,8 @@ After each stage, a summary and a proposed commit message are produced, and the 
 | 1 | Ruby/Rails basics, Rails API scaffold, `/health` | Done |
 | 2 | Domain model, REST API (keyword CRUD) | Done |
 | 3 | SerpApi integration, normalization, rank tracking | Done |
-| 4 | Scheduled jobs, caching, resilience, metrics | Done, awaiting confirmation |
-| 5 | Laya pre-classifier integration | Pending |
+| 4 | Scheduled jobs, caching, resilience, metrics | Done |
+| 5 | Laya pre-classifier integration | Done, awaiting confirmation |
 | 6 | Next.js dashboard | Pending |
 | 7 | Tests, A/B/C comparison, benchmarks | Pending |
 | 8 | Deployment and operations | Pending |
@@ -109,7 +109,7 @@ bin/rails server              # API + background worker (Solid Queue runs inside
 
 ## API
 
-Keyword CRUD under `/api/v1/keywords`; asynchronous searches with `POST/GET /api/v1/keywords/:id/searches`; `GET /api/v1/keywords/:id/rank_history`; `GET /api/v1/metrics/summary`. All with validation, pagination, and a shared JSON error format. Full contract, failure mapping, retry/cache/budget rules, and limitations: [docs/api-contract.md](docs/api-contract.md).
+Keyword CRUD under `/api/v1/keywords`; asynchronous searches with `POST/GET /api/v1/keywords/:id/searches`; `GET /api/v1/keywords/:id/rank_history`; `GET /api/v1/metrics/summary`. All with validation, pagination, and a shared JSON error format. Optional natural-language planning with `POST /api/v1/intent/plan` and `POST /api/v1/intent/plan/:id/confirm`. Full contract, failure mapping, retry/cache/budget rules, and limitations: [docs/api-contract.md](docs/api-contract.md).
 
 A search does not call SerpApi inside the request. It is queued, a worker performs the call, and you poll the run:
 
@@ -124,17 +124,38 @@ bin/rails searchops:serpapi_quota                            # SerpApi plan and 
 
 To run a real search, put your SerpApi key in `backend/.env` as `SERPAPI_API_KEY` and restart the server. Real SerpApi calls are counted by `SEARCH_MAX_REQUESTS_PER_DAY` (retries included); cache hits are free. Scheduled keywords (`daily` or `weekly`) are searched automatically by a recurring job while the server or `bin/jobs` is running. There is no authentication yet, so run it locally only.
 
+### Natural-language planning (optional, needs Laya)
+
+Laya only classifies the sentence; Rails extracts the details, validates a closed set of plan fields, and executes only after you confirm. With Laya off (the default) or down, the endpoint answers with a structured-input fallback and the rest of the API is unaffected.
+
+```bash
+scripts/laya-setup.sh          # once: isolated Python env in tools/laya, laya==0.4.15 (reuses the model cache if you already have the checkpoints, about 1.45 GB otherwise)
+scripts/laya-serve.sh          # in its own terminal: http://127.0.0.1:8765, multilingual checkpoint
+# backend/.env: LAYA_ENABLED=true   (then restart the Rails server)
+
+curl -s -X POST localhost:3000/api/v1/intent/plan -H 'Content-Type: application/json' \
+  -d '{"text":"Where does example.com rank for '"'"'react developer jobs'"'"' in the Philippines? Compare with last week"}'
+# 201 {"data":{"id":12,"status":"ready","next_step":"confirm","plan":{"intent":"organic_rank_tracking","query":"react developer jobs","country":"ph","language":"en","target_domain":"example.com","compare_previous":true,...},...}}
+curl -s -X POST localhost:3000/api/v1/intent/plan/12/confirm    # creates the keyword and queues one search (budget and cache apply)
+LAYA_ENABLED=true bin/rails "searchops:intent_eval[dev]"        # accuracy report on the labeled sentences
+```
+
+What to expect: the project's own example sentence (Korean, job search) is read as `unsupported` at 0.56 by the real model and ends in a clarification with the country, query, and flags pre-filled, not in a plan. Job searches cannot be confirmed yet.
+
 ## Configuration
 
 Real values go only in `backend/.env`, which is never committed. `backend/.env.example` contains placeholders only. The search-related variables are placeholders until they are used in Stages 3–5.
 
 ```dotenv
 SERPAPI_API_KEY=replace_me
-LAYA_ENABLED=false
+LAYA_ENABLED=false            # optional natural-language planning; the core flow never needs it
 SEARCH_MAX_REQUESTS_PER_DAY=5
 SEARCH_CACHE_TTL_SECONDS=3600
 SEARCH_MAX_CONCURRENCY=2
 SEARCH_MAX_KEYWORDS=50
+LAYA_URL=http://127.0.0.1:8765
+LAYA_MIN_CONFIDENCE=0.7
+INTENT_RETENTION_DAYS=30
 ```
 
 Development and test use the local PostgreSQL through `config/database.yml` (`searchops_development`, `searchops_test`). `DATABASE_URL` is an optional override.

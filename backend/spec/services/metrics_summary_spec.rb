@@ -155,6 +155,30 @@ RSpec.describe MetricsSummary, env: { "SEARCH_MAX_REQUESTS_PER_DAY" => "20", "SE
     end
   end
 
+  describe "intent" do
+    it "is empty and disabled by default", env: { "LAYA_ENABLED" => nil } do
+      expect(summary[:intent]).to eq(
+        enabled: false, requests: 0,
+        by_outcome: { "planned" => 0, "needs_clarification" => 0, "unsupported" => 0, "unavailable" => 0, "executed" => 0 },
+        fallbacks: {}, laya_latency_ms: { samples: 0, p50: nil, p95: nil, max: nil }
+      )
+    end
+
+    it "counts outcomes, fallbacks, and Laya latency without exposing sentences", env: { "LAYA_ENABLED" => "true" } do
+      create(:intent_request, outcome: "planned", analysis: { "laya_latency_ms" => 20 })
+      create(:intent_request, outcome: "needs_clarification", fallback_reason: "low_confidence", analysis: { "laya_latency_ms" => 40 })
+      create(:intent_request, outcome: "unavailable", fallback_reason: "classifier_timeout", original_text: "very private sentence")
+      create(:intent_request, outcome: "planned", created_at: 3.days.ago)
+
+      intent = summary[:intent]
+      expect(intent).to include(enabled: true, requests: 3)
+      expect(intent[:by_outcome]).to include("planned" => 1, "needs_clarification" => 1, "unavailable" => 1)
+      expect(intent[:fallbacks]).to eq("low_confidence" => 1, "classifier_timeout" => 1)
+      expect(intent[:laya_latency_ms]).to eq(samples: 2, p50: 30, p95: 39, max: 40)
+      expect(intent.to_json).not_to include("private")
+    end
+  end
+
   it "never contains search terms or secrets" do
     run(request_metadata: { "query" => "very private words", "error_message" => "Invalid API key sk-123" })
 

@@ -15,7 +15,7 @@ RSpec.describe "Api::V1::Metrics", type: :request, env: { "SEARCH_MAX_REQUESTS_P
 
       expect(response).to have_http_status(:ok)
       data = json["data"]
-      expect(data.keys).to match_array(%w[window requests upstream cache errors budget keywords queue])
+      expect(data.keys).to match_array(%w[window requests upstream cache errors budget keywords queue intent])
       expect(data["window"]["name"]).to eq("24h")
       expect(data["requests"]["total"]).to eq(3)
       expect(data["errors"]).to eq("timeout" => 1)

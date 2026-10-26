@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_26_010200) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_26_020000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -23,6 +23,9 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_26_010200) do
     t.string "fallback_reason"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.jsonb "analysis", default: {}, null: false
+    t.datetime "confirmed_at"
+    t.jsonb "execution"
     t.index ["created_at"], name: "index_intent_requests_on_created_at"
   end
 
