@@ -130,3 +130,10 @@ Resolved from the assumptions and entry conditions above:
 - Test framework: RSpec (`rspec-rails`). Lint: `rubocop-rails-omakase`. Security: Brakeman and bundler-audit are in the Gemfile. `dotenv-rails` loads `backend/.env`.
 
 Still unverified: `serpapi` gem compatibility with Ruby 4.0.3 (Stage 3), Laya HTTP contract and Korean accuracy (Stage 5).
+
+## 10. Stage 2 update (2026-10-26)
+
+- Schema: `keywords`, `search_runs`, `search_results`, `rank_snapshots`, `intent_requests` (details in [api-contract.md](api-contract.md)). Unique index on keyword search settings uses `NULLS NOT DISTINCT`, so PostgreSQL 15+ is required (local is 16.15). Check the managed-database version in Stage 8.
+- `Keyword` stores `country` (SerpApi `gl`) and `language` (`hl`) instead of a single `locale` column, because both parameters are documented separately by SerpApi.
+- Only `engine=google` is allowed until a provider implements another engine. The planner contract in `CLAUDE.md` mentions `google_jobs`; it is added to the allow-list when its provider support and fields are verified.
+- Authentication is intentionally not implemented yet. This is a Stage 8 prerequisite before any public exposure.

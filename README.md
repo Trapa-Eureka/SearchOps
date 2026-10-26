@@ -2,7 +2,7 @@
 
 **English** · [Korean](README.ko.md)
 
-> **Status: Stage 1 (Rails foundations) is complete: the Rails API boots, `/health` works, and the specs pass. Search features are not implemented yet.**
+> **Status: Stage 2 (domain model and keyword CRUD) is complete: schema, validations, and `/api/v1/keywords` are implemented and tested. SerpApi search is not implemented yet.**
 > The checklist below defines what must be answerable with "yes" when the project is finished. An item is marked `[x]` only once it is implemented.
 
 SearchOps runs keyword searches through [SerpApi](https://serpapi.com), stores the results as snapshots, tracks **rank changes for a target domain**, and monitors **latency, errors, cache hits, and usage** of the upstream API. The goal is to learn Ruby/Rails by building a service with production-minded concerns: reliability, observability, and testing.
@@ -77,8 +77,8 @@ After each stage, a summary and a proposed commit message are produced, and the 
 | Stage | Content | Status |
 |-------|---------|--------|
 | 0 | Discovery and baseline (`docs/discovery.md`) | Done |
-| 1 | Ruby/Rails basics, Rails API scaffold, `/health` | Done, awaiting confirmation |
-| 2 | Domain model, REST API (keyword CRUD) | Pending |
+| 1 | Ruby/Rails basics, Rails API scaffold, `/health` | Done |
+| 2 | Domain model, REST API (keyword CRUD) | Done, awaiting confirmation |
 | 3 | SerpApi integration, normalization, rank tracking | Pending |
 | 4 | Scheduled jobs, caching, resilience, metrics | Pending |
 | 5 | Laya pre-classifier integration | Pending |
@@ -106,6 +106,10 @@ bin/rails server              # then: curl localhost:3000/health
 
 `GET /health` returns `200 {"status":"ok","database":"up"}`, or `503 {"status":"degraded","database":"down"}` when the database is unreachable (the underlying error is logged by class only, never returned). Rails' built-in `GET /up` also remains.
 
+## API
+
+Stage 2 provides keyword CRUD under `/api/v1/keywords` (validation, normalization, pagination, a shared JSON error format). Full contract, data model, and known limitations: [docs/api-contract.md](docs/api-contract.md). There is no authentication yet, so run it locally only.
+
 ## Configuration
 
 Real values go only in `backend/.env`, which is never committed. `backend/.env.example` contains placeholders only. The search-related variables are placeholders until they are used in Stages 3–5.
@@ -115,6 +119,7 @@ SERPAPI_API_KEY=replace_me
 LAYA_ENABLED=false
 SEARCH_MAX_REQUESTS_PER_DAY=5
 SEARCH_CACHE_TTL_SECONDS=3600
+SEARCH_MAX_KEYWORDS=50
 ```
 
 Development and test use the local PostgreSQL through `config/database.yml` (`searchops_development`, `searchops_test`). `DATABASE_URL` is an optional override.

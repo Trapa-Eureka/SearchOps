@@ -7,6 +7,12 @@ Rails.application.routes.draw do
 
   get "health" => "health#show"
 
+  namespace :api do
+    namespace :v1 do
+      resources :keywords, only: %i[index show create update destroy]
+    end
+  end
+
   # Defines the root path route ("/")
   # root "posts#index"
 end
