@@ -213,4 +213,41 @@ RSpec.describe ExecuteSearchJob, env: { "SEARCH_MAX_REQUESTS_PER_DAY" => "100" }
       expect(run.reload).to have_attributes(status: "failed", error_category: "unknown")
     end
   end
+
+  describe "the provider factory" do
+    around do |example|
+      original = described_class.provider_factory
+      example.run
+    ensure
+      described_class.provider_factory = original
+    end
+
+    it "builds the SerpApi provider from the environment by default", env: { "SERPAPI_API_KEY" => "factory-spec-key-1234" } do
+      allow(Providers::SerpApiSearchProvider).to receive(:from_env).and_call_original # the rest of this file stubs it
+
+      expect(described_class.provider_factory.call).to be_a(Providers::SerpApiSearchProvider)
+    end
+
+    it "can be replaced, and then no SerpApi request is made at all" do
+      run = create(:search_run, :queued)
+      stand_in = instance_double(Providers::SerpApiSearchProvider)
+      allow(stand_in).to receive(:search).and_return(SearchProvider::Response.new(results: [], empty: true, search_id: "x", skipped_count: 0))
+      described_class.provider_factory = -> { stand_in }
+
+      described_class.perform_now(run.id)
+
+      expect(stand_in).to have_received(:search).once
+      expect(run.reload.status).to eq("succeeded")
+      expect(a_request(:any, /serpapi/)).not_to have_been_made
+    end
+
+    it "still fails an unconfigured provider cleanly" do
+      run = create(:search_run, :queued)
+      described_class.provider_factory = -> { raise SearchProvider::NotConfigured }
+
+      described_class.perform_now(run.id)
+
+      expect(run.reload).to have_attributes(status: "failed", error_category: "auth")
+    end
+  end
 end

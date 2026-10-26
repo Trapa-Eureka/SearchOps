@@ -10,6 +10,10 @@ class ExecuteSearchJob < ApplicationJob
 
   MAX_ATTEMPTS = 3
 
+  # Builds the provider for a run. The default talks to SerpApi; specs and the benchmark
+  # replace it with a stand-in so that nothing reaches the network or spends quota.
+  class_attribute :provider_factory, instance_writer: false, default: -> { Providers::SerpApiSearchProvider.from_env }
+
   # Bounds how many searches talk to SerpApi at once (shared across workers and processes).
   limits_concurrency to: Integer(ENV.fetch("SEARCH_MAX_CONCURRENCY", 2).to_s, 10, exception: false) || 2,
                      key: ->(_run_id) { "serpapi_search" },
@@ -32,7 +36,7 @@ class ExecuteSearchJob < ApplicationJob
   private
 
   def build_provider(run, recorder)
-    Providers::SerpApiSearchProvider.from_env
+    self.class.provider_factory.call
   rescue SearchProvider::NotConfigured
     recorder.failure(run, SearchProvider::Error.new("SerpApi key is not configured", category: :auth))
     nil

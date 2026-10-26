@@ -389,4 +389,14 @@ RSpec.describe Intent::Planner do
       expect(request.analysis.dig("classification", "min_confidence")).to eq(0.7)
     end
   end
+
+  describe "a query that is far too long" do
+    it "is never turned into an executable plan: the user is asked for the query instead" do
+      request = plan("Where does example.com rank for '#{'a' * 250}' in the Philippines?")
+
+      expect(request.outcome).to eq("needs_clarification")
+      expect(request.plan).not_to have_key("query")
+      expect(request.analysis["missing"]).to include("query")
+    end
+  end
 end

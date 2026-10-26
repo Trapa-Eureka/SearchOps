@@ -52,4 +52,11 @@ RSpec.describe RankSnapshot, type: :model do
     expect(snapshot).not_to be_valid
     expect(snapshot.errors[:search_run]).to include("must belong to the same keyword")
   end
+
+  it "reports a missing run as invalid instead of raising from the same-keyword check" do
+    snapshot = build(:rank_snapshot, search_run: nil)
+
+    expect { snapshot.valid? }.not_to raise_error
+    expect(snapshot.errors.attribute_names).to include(:search_run)
+  end
 end

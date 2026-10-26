@@ -43,6 +43,8 @@ group :development, :test do
   gem "rspec-rails", "~> 8.0"
   gem "factory_bot_rails"
   gem "webmock"
+  # Line and branch coverage. Off unless COVERAGE=1, so the normal run stays fast.
+  gem "simplecov", require: false
 
   # Load .env (placeholders only in .env.example; real values never committed)
   gem "dotenv-rails"

@@ -148,4 +148,14 @@ RSpec.describe SearchEnqueuer, env: { "SEARCH_MAX_REQUESTS_PER_DAY" => "10", "SE
       expect { enqueuer.call(other) }.to raise_error(SearchBudget::Exceeded)
     end
   end
+
+  describe "a lost race that leaves nothing to deduplicate against" do
+    it "raises instead of pretending a run exists" do
+      allow(keyword.search_runs).to receive(:create!).and_raise(ActiveRecord::RecordNotUnique)
+
+      expect { enqueuer.call(keyword) }.to raise_error(ActiveRecord::RecordNotUnique)
+      expect(SearchRun.count).to eq(0)
+      expect(ExecuteSearchJob).not_to have_been_enqueued
+    end
+  end
 end

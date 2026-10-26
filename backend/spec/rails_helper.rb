@@ -1,4 +1,15 @@
 # This file is copied to spec/ when you run 'rails generate rspec:install'
+if ENV["COVERAGE"] == "1"
+  require "simplecov"
+  SimpleCov.start "rails" do
+    enable_coverage :branch
+    add_filter %w[/spec/ /config/ /db/ /bin/ /vendor/]
+    # The benchmark tooling is measured by its own specs, not counted against the app.
+    add_group "Services", "app/services"
+    add_group "Intent", "app/services/intent"
+    add_group "Providers", "app/services/providers"
+  end
+end
 require 'spec_helper'
 ENV['RAILS_ENV'] ||= 'test'
 require_relative '../config/environment'

@@ -217,4 +217,48 @@ RSpec.describe Intent::Executor, env: { "SERPAPI_API_KEY" => "executor-spec-key-
     expect(Rails.logger).to have_received(:info).with(a_string_matching(/intent_confirmed request_id=#{request.id} kind=search keyword_id=\d+/))
     expect(Rails.logger).not_to have_received(:info).with(a_string_including("very private sentence"))
   end
+
+  describe "plans that must not be executed" do
+    it "refuses a request whose outcome is not one that can be confirmed" do
+      %w[unsupported unavailable].each do |outcome|
+        request = planned(outcome: outcome)
+
+        expect { executor.call(request) }.to raise_error(described_class::NotConfirmable) { |error| expect(error.code).to eq("not_confirmable") }
+        expect(request.reload.outcome).to eq(outcome)
+      end
+    end
+
+    it "refuses a plan whose intent has nothing to execute" do
+      request = planned(plan: { "intent" => "unsupported" })
+
+      expect { executor.call(request) }.to raise_error(described_class::NotConfirmable)
+      expect(Keyword.count).to eq(0)
+      expect(SearchRun.count).to eq(0)
+    end
+
+    it "creates nothing when the confirmation is refused" do
+      request = planned(plan: rank_plan.merge("country" => "zz"))
+
+      expect { executor.call(request) }.to raise_error(described_class::InvalidPlan)
+      expect([ Keyword.count, SearchRun.count, request.reload.outcome ]).to eq([ 0, 0, "planned" ])
+    end
+  end
+
+  describe "edits that arrive as request parameters" do
+    it "are read from ActionController::Parameters too, and are validated like any other edit" do
+      request = planned(plan: rank_plan.merge("query" => nil), outcome: "needs_clarification")
+      edits = ActionController::Parameters.new(query: "vue developer", target_domain: "vuejs.org")
+
+      executor.call(request, edits)
+
+      expect(Keyword.last).to have_attributes(query: "vue developer", target_domain: "vuejs.org")
+    end
+
+    it "cannot smuggle an unknown field through the parameters" do
+      request = planned
+      edits = ActionController::Parameters.new(run_as: "admin")
+
+      expect { executor.call(request, edits) }.to raise_error(described_class::InvalidPlan) { |error| expect(error.errors).to include("run_as" => "unknown_field") }
+    end
+  end
 end

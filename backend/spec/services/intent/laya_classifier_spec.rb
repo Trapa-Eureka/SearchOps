@@ -203,4 +203,54 @@ RSpec.describe Intent::LayaClassifier do
       expect(result.latency_ms).to be < 5_000
     end
   end
+
+  describe "the address" do
+    it "accepts only http and https URLs, so an operator typo cannot point it at a file or another protocol" do
+      [ "file:///etc/passwd", "ftp://127.0.0.1/", "javascript:alert(1)", "gopher://127.0.0.1:70/", "127.0.0.1:8765", "http://", "", nil, "http://exa mple.com" ].each do |url|
+        expect { described_class.new(url: url, model: "multilingual", timeout: 2) }
+          .to raise_error(ArgumentError, "LAYA_URL must be an http or https URL"), "expected #{url.inspect} to be refused"
+      end
+    end
+
+    it "joins the path whether or not the base ends with a slash, and keeps a base path" do
+      stub_request(:post, "http://127.0.0.1:9000/base/v1/systemone")
+        .to_return(status: 200, body: Rails.root.join("spec/fixtures/laya/systemone_response.json").read)
+
+      [ "http://127.0.0.1:9000/base", "http://127.0.0.1:9000/base/" ].each_with_index do |url, index|
+        described_class.new(url: url, model: "multilingual", timeout: 2).classify("hello")
+
+        expect(a_request(:post, "http://127.0.0.1:9000/base/v1/systemone")).to have_been_made.times(index + 1)
+      end
+    end
+
+    it "never sends the address the user typed anywhere: the target comes only from configuration" do
+      stub = stub_request(:post, url).to_return(status: 200, body: Rails.root.join("spec/fixtures/laya/systemone_response.json").read)
+
+      classifier.classify("http://169.254.169.254/latest/meta-data/ please")
+
+      expect(stub).to have_been_requested.once
+      expect(a_request(:any, /169\.254/)).not_to have_been_made
+    end
+  end
+
+  describe "answers that do not have the expected shape" do
+    {
+      "a JSON array" => "[]",
+      "a JSON string" => '"ok"',
+      "no answers" => "{}",
+      "answers that are not an object" => '{"answers": []}',
+      "an intent answer that is not an object" => '{"answers": {"intent": "organic_rank_tracking"}}',
+      "an intent answer without probabilities" => '{"answers": {"intent": {"choice": "organic_rank_tracking"}}}',
+      "an unknown label" => '{"answers": {"intent": {"choice": "delete_everything", "probabilities": {"organic_rank_tracking": 1.0}}}}'
+    }.each do |name, body|
+      it "is an invalid response, not a crash or a guess: #{name}" do
+        stub_request(:post, url).to_return(status: 200, body: body)
+
+        error = error_from { classifier.classify("hello") }
+
+        expect(error).to be_a(Intent::ClassifierError)
+        expect(error.category).to eq(:invalid_response)
+      end
+    end
+  end
 end

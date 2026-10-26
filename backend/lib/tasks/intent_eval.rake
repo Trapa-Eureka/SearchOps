@@ -1,9 +1,11 @@
 namespace :searchops do
-  desc "Measure the intent classifier on spec/fixtures/intent/eval_set.json (SPLIT=dev|test|all, needs laya-serve running)"
+  desc "Measure the intent classifier on spec/fixtures/intent/eval_set.json (SPLIT=dev|test|all) or on the Stage 7 held-out set (SET=heldout). Needs laya-serve running."
   task :intent_eval, [ :split ] => :environment do |_task, args|
-    split = (args[:split] || ENV.fetch("SPLIT", "dev")).to_s
-    data = JSON.parse(Rails.root.join("spec/fixtures/intent/eval_set.json").read)
-    items = data["items"].select { |item| split == "all" || item["split"] == split }
+    heldout = ENV["SET"] == "heldout"
+    split = heldout ? "heldout" : (args[:split] || ENV.fetch("SPLIT", "dev")).to_s
+    file = heldout ? "heldout_set.json" : "eval_set.json"
+    data = JSON.parse(Rails.root.join("spec/fixtures/intent/#{file}").read)
+    items = data["items"].select { |item| heldout || split == "all" || item["split"] == split }
     abort "No items for split #{split.inspect}" if items.empty?
 
     classifier = Intent::LayaClassifier.from_env
@@ -29,7 +31,7 @@ namespace :searchops do
 
     pct = ->(num, den) { den.zero? ? "n/a" : format("%.1f%% (%d/%d)", 100.0 * num / den, num, den) }
 
-    puts "Intent evaluation: split=#{split} n=#{rows.size} model=#{Intent::Config.model} version=#{Intent::Config.version_label} min_confidence=#{min}"
+    puts "Intent evaluation: set=#{heldout ? "heldout (sha256 #{Digest::SHA256.file(Rails.root.join("spec/fixtures/intent/#{file}")).hexdigest[0, 16]})" : "eval"} split=#{split} n=#{rows.size} model=#{Intent::Config.model} version=#{Intent::Config.version_label} min_confidence=#{min}"
 
     correct = rows.count { |r| r[:c].intent == r[:item]["intent"] }
     puts "\nIntent, top-1 over all inputs:   #{pct.call(correct, rows.size)}"
@@ -74,6 +76,17 @@ namespace :searchops do
       fp = flagged.count { |r| r[:e].public_send(cue) && !r[:item][flag] }
       fn = flagged.count { |r| !r[:e].public_send(cue) && r[:item][flag] }
       puts "  #{flag.ljust(17)} (#{truth} true)  precision #{pct.call(tp, tp + fp).ljust(16)} recall #{pct.call(tp, tp + fn)}"
+    end
+
+    if ENV["VERBOSE"] == "1"
+      puts "\nMisclassified (true -> predicted, confidence, planner outcome):"
+      rows.reject { |r| r[:c].intent == r[:item]["intent"] }.each do |r|
+        puts format("  #%-3d %-3s %-22s -> %-22s %.3f  %-30s %s", r[:item]["id"], r[:item]["lang"], r[:item]["intent"], r[:c].intent, r[:c].confidence,
+                    r[:outcome].outcome + (r[:outcome].fallback_reason ? "/#{r[:outcome].fallback_reason}" : ""), r[:item]["text"][0, 70])
+      end
+      unsupported_planned = rows.select { |r| r[:item]["intent"] == "unsupported" && r[:outcome].outcome == "planned" }
+      puts "\nUnsupported sentences that became a ready plan:"
+      unsupported_planned.each { |r| puts "  ##{r[:item]['id']} #{r[:item]['text']}  => #{r[:outcome].plan.slice('intent', 'query', 'keyword_id').inspect}" }
     end
 
     latencies = rows.map { |r| r[:c].latency_ms }.sort

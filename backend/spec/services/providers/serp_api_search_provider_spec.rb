@@ -434,4 +434,16 @@ RSpec.describe Providers::SerpApiSearchProvider do
       expect(error_from { provider.account }.category).to eq(:timeout)
     end
   end
+
+  describe "links that cannot be parsed" do
+    it "are skipped and counted, not raised" do
+      stub_serpapi(body: { search_metadata: { id: "x", status: "Success" },
+                           organic_results: [ { "position" => 1, "link" => "http://exa mple.com/a" }, { "position" => 2, "link" => "https://example.com/ok" } ] }.to_json)
+
+      response = provider.search(request)
+
+      expect(response.results.map(&:url)).to eq([ "https://example.com/ok" ])
+      expect(response.skipped_count).to eq(1)
+    end
+  end
 end

@@ -173,4 +173,34 @@ RSpec.describe Intent::PlanValidator do
     )
     expect(Intent::Catalog::INTENTS).to eq(%w[organic_rank_tracking job_search search_history unsupported])
   end
+
+  describe "the location" do
+    it "is optional, and blank means none" do
+      [ nil, "", "   " ].each { |value| expect(validate(rank_plan.merge("location" => value)).plan).not_to have_key("location") }
+    end
+
+    it "is squished" do
+      expect(validate(rank_plan.merge("location" => "  Metro \n  Manila ")).plan["location"]).to eq("Metro Manila")
+    end
+
+    it "must be text, not a number, list, or object" do
+      [ 12, [ "Manila" ], { "city" => "Manila" }, true ].each do |value|
+        expect(validate(rank_plan.merge("location" => value)).errors).to eq("location" => "must_be_text")
+      end
+    end
+
+    it "has a length limit" do
+      ok = validate(rank_plan.merge("location" => "a" * Keyword::LOCATION_MAX_LENGTH))
+      too_long = validate(rank_plan.merge("location" => "a" * (Keyword::LOCATION_MAX_LENGTH + 1)))
+
+      expect(ok.errors).to eq({})
+      expect(too_long.errors).to eq("location" => "too_long")
+    end
+
+    it "cannot carry control characters" do
+      [ "Man\u0000ila", "Man\u0007ila", "Manila\u001b[31m" ].each do |value|
+        expect(validate(rank_plan.merge("location" => value)).errors).to eq("location" => "has_control_characters")
+      end
+    end
+  end
 end

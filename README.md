@@ -2,7 +2,7 @@
 
 **English** · [Korean](README.ko.md)
 
-> **Status: Stage 6 (Next.js dashboard) is complete: five screens (overview, keywords, keyword detail with rank history, API health, natural-language planner) in English and Korean, in a sidebar layout with stacked-bar request charts, recent-search strips, and filter tabs with real counts, showing only real data from the Rails API. Verified with 747 backend specs, 358 frontend tests (including an axe accessibility check of every screen and WCAG contrast checks of the colour tokens), and by driving the real UI against a real Rails server and a real local Laya server. Natural-language planning accuracy is modest (intent 74 to 77% on small author-labeled sets, Korean 62 to 64%), so most sentences end in a clarification rather than a ready plan; see [docs/intent-eval.md](docs/intent-eval.md). `job_search` is understood but cannot run yet (no `google_jobs` engine).**
+> **Status: Stage 7 (tests, A/B/C comparison, benchmarks) is complete: 858 backend specs (95.9% of lines, 91.3% of branches covered) including 15 end-to-end journeys, 358 frontend tests, and a comparison of structured search, natural language through Laya, and Laya down on a seeded fake provider (no SerpApi call was made). On 80 fresh held-out sentences Laya's intent accuracy is **71%** (Korean 47%), one confident answer in five is wrong, and natural language adds about 85 ms per task while completing no task the form cannot; a Laya that hangs costs 4 s per sentence. Details: [docs/benchmarks.md](docs/benchmarks.md), [docs/intent-eval.md](docs/intent-eval.md). `job_search` is understood but cannot run yet (no `google_jobs` engine).**
 > The checklist below defines what must be answerable with "yes" when the project is finished. An item is marked `[x]` only once it is implemented.
 
 SearchOps runs keyword searches through [SerpApi](https://serpapi.com), stores the results as snapshots, tracks **rank changes for a target domain**, and monitors **latency, errors, cache hits, and usage** of the upstream API. The goal is to learn Ruby/Rails by building a service with production-minded concerns: reliability, observability, and testing.
@@ -51,7 +51,7 @@ Security boundary: the frontend talks only to Rails, and only Rails calls upstre
 | 2 | Does the service keep working when the search API is **slow or failing**? | Connect/read timeouts; retry only transient errors with capped exponential backoff and jitter (respect `Retry-After`); on final failure keep the last successful snapshot, **marked stale**; never retry invalid credentials or malformed requests | 4 | [x] |
 | 3 | Are **duplicate search requests prevented** and **usage managed**? | Idempotent jobs keyed by a fingerprint of normalized query + engine + locale + settings + time window; block concurrent duplicate runs; cache TTL with `cache_hit` tracking; daily request budget and concurrency limits (quota read from the account/docs, never hardcoded) | 4 | [x] |
 | 4 | Is **rank change** computed accurately? | Canonicalize hostnames, define and test exact vs. subdomain matching; absent rank is `NULL` ("not found in retrieved window"), never 0; compare only snapshots with equivalent search settings; lower number = better position | 3 | [x] |
-| 5 | Is the core logic **tested with RSpec** (or similar)? | Unit tests for normalizer, domain matching, rank delta, fingerprint, plan validator, and budget rules; request/integration tests; provider adapter tests (success, empty, 4xx, 429, 5xx, timeout, malformed JSON); Laya adapter tests (unsupported intent, prompt injection, timeout, disabled) | all, 7 | [ ] |
+| 5 | Is the core logic **tested with RSpec** (or similar)? | Unit tests for normalizer, domain matching, rank delta, fingerprint, plan validator, and budget rules; request/integration tests; provider adapter tests (success, empty, 4xx, 429, 5xx, timeout, malformed JSON); Laya adapter tests (unsupported intent, prompt injection, timeout, disabled) | all, 7 | [x] |
 | 6 | Can **execution time and failure causes** be inspected in logs? | `SearchRun` stores start/end, upstream latency, error category, and cache source; structured logs; p50/p95, success/failure counts, errors by category, cache hit rate, and upstream call count via `/api/v1/metrics/summary`; search terms and secrets minimized in logs | 4 | [x] |
 | 7 | Does the core flow work **without Laya**? | With `LAYA_ENABLED=false`: add keyword, search, snapshot, compare, and scheduled checks all work; natural language returns only a safe fallback (clarification request) | 5 | [x] |
 | 8 | Is a natural-language plan **validated and confirmed** before it runs? | Allow-list of known fields; no arbitrary search on low confidence or invalid output; costly or broad searches require user confirmation | 5 | [x] |
@@ -82,8 +82,8 @@ After each stage, a summary and a proposed commit message are produced, and the 
 | 3 | SerpApi integration, normalization, rank tracking | Done |
 | 4 | Scheduled jobs, caching, resilience, metrics | Done |
 | 5 | Laya pre-classifier integration | Done |
-| 6 | Next.js dashboard | Done, awaiting confirmation |
-| 7 | Tests, A/B/C comparison, benchmarks | Pending |
+| 6 | Next.js dashboard | Done |
+| 7 | Tests, A/B/C comparison, benchmarks | Done, awaiting confirmation |
 | 8 | Deployment and operations | Pending |
 
 ## Local setup (verified on macOS, Homebrew Ruby 4.0.3, Rails 8.1.4, PostgreSQL 16)
@@ -106,6 +106,24 @@ bin/rails server              # API + background worker (Solid Queue runs inside
 ```
 
 `GET /health` returns `200 {"status":"ok","database":"up"}`, or `503 {"status":"degraded","database":"down"}` when the database is unreachable (the underlying error is logged by class only, never returned). Rails' built-in `GET /up` also remains.
+
+## Tests and benchmarks
+
+```bash
+cd backend
+bundle exec rspec                       # 858 examples, about 14 s; includes spec/e2e (whole journeys through the API)
+COVERAGE=1 bundle exec rspec            # line and branch coverage in coverage/index.html
+cd ../frontend && pnpm test             # 358 tests
+
+# The A/B/C comparison: needs scripts/laya-serve.sh and a scratch database named *_bench (it deletes all rows between modes)
+createdb searchops_bench
+DATABASE_URL=postgresql:///searchops_bench RAILS_ENV=development bin/rails db:migrate
+DATABASE_URL=postgresql:///searchops_bench RAILS_ENV=development bin/rails searchops:benchmark
+```
+
+The comparison runs 20 rank-check tasks (and 60 other sentences) in three ways through the real Rails stack: the keyword form (A), a sentence through Laya with a confirmation (B), and Laya unavailable (C). The search provider is a seeded fake with assumed latency and failures, so it measures what the app adds, not what SerpApi does. Result in short: natural language completed no task the form could not, added about 85 ms per task, and typed more characters than the form; confirming plans without reading them spent about 5 extra calls per 20 tasks on the wrong market (a fifth on top of a careful person's calls); a hanging Laya costs 4 s per sentence. Full method, tables, and limits: [docs/benchmarks.md](docs/benchmarks.md).
+
+On 80 held-out sentences written after the design was frozen, intent accuracy is 71% (Korean 47%, Japanese 43%) and 20% of answers are confident and wrong, against 77% on the earlier, tuned-on test split. Details and the failures found: [docs/intent-eval.md](docs/intent-eval.md).
 
 ## Dashboard
 
