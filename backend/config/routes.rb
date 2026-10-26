@@ -10,6 +10,8 @@ Rails.application.routes.draw do
   namespace :api do
     namespace :v1 do
       get "metrics/summary", to: "metrics#summary"
+      get "options", to: "options#show"
+      get "searches", to: "runs#index"
 
       post "intent/plan", to: "intents#plan"
       get "intent/plan/:id", to: "intents#show"

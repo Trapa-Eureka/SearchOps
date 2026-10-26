@@ -198,7 +198,7 @@ module Intent
     end
 
     def prefill(extraction)
-      { query: extraction.query_candidates.first, country: extraction.country, language: extraction.language,
+      { query: extraction.query, country: extraction.country, language: extraction.language,
         target_domain: extraction.target_domain }.compact
     end
 

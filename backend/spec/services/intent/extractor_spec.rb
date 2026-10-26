@@ -180,23 +180,21 @@ RSpec.describe Intent::Extractor do
       expect(extract("C++ 개발자 채용").query).to eq("C++")
     end
 
-    it "does not guess a query from a plain English sentence, but suggests the cleaned text" do
+    it "does not guess a query from a plain English sentence, and offers no suggestion for it" do
       result = extract("Find remote React jobs in the Philippines")
 
       expect(result.query).to be_nil
-      expect(result.query_candidates).to eq([ "Find remote React jobs in the Philippines" ])
+      expect(result.query_candidates).to eq([])
     end
 
-    it "removes the domain from the suggestion" do
-      expect(extract("Where does example.com rank for react jobs").query_candidates.first).not_to include("example.com")
-    end
-
-    it "caps suggestions to the query length limit" do
-      expect(extract("word " * 100).query_candidates.first.length).to be <= Keyword::QUERY_MAX_LENGTH
+    it "suggests quoted phrases and Latin phrases, never a rewrite of the whole sentence" do
+      expect(extract("'shoes' or 'boots'").query_candidates).to eq([ "shoes", "boots" ])
+      expect(extract("서울에서 Senior React Developer 찾아줘").query_candidates).to eq([ "Senior React Developer" ])
+      expect(extract("Where does example.com rank for react jobs").query_candidates).to eq([])
     end
 
     it "offers nothing for an empty-ish text" do
-      expect(extract("...").query_candidates).to eq([ "..." ])
+      expect(extract("...").query_candidates).to eq([])
     end
   end
 

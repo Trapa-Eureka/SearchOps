@@ -1,0 +1,81 @@
+@import "tailwindcss";
+
+/*
+  Colour tokens. Text/background pairs are checked for WCAG AA contrast (4.5:1) by
+  src/lib/contrast.test.ts, which reads this file, so edit values here and run the tests.
+  Status colours are always paired with a symbol and a word in the UI, never colour alone.
+*/
+:root {
+  color-scheme: light dark;
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --text: #111827;
+  --muted: #4b5563;
+  --border: #d1d5db;
+  --accent: #1d4ed8;
+  --accent-hover: #1e40af;
+  --accent-contrast: #ffffff;
+  --ok: #166534;
+  --ok-bg: #dcfce7;
+  --warn: #854d0e;
+  --warn-bg: #fef3c7;
+  --danger: #991b1b;
+  --danger-bg: #fee2e2;
+  --info: #1e40af;
+  --info-bg: #dbeafe;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b0f17;
+    --surface: #121826;
+    --text: #e5e7eb;
+    --muted: #9ca3af;
+    --border: #2f3a4d;
+    --accent: #7aa2ff;
+    --accent-hover: #a3bfff;
+    --accent-contrast: #0b0f17;
+    --ok: #86efac;
+    --ok-bg: #12301f;
+    --warn: #fcd34d;
+    --warn-bg: #3a2a07;
+    --danger: #fca5a5;
+    --danger-bg: #3b1212;
+    --info: #93c5fd;
+    --info-bg: #14284d;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-contrast: var(--accent-contrast);
+  --color-ok: var(--ok);
+  --color-ok-bg: var(--ok-bg);
+  --color-warn: var(--warn);
+  --color-warn-bg: var(--warn-bg);
+  --color-danger: var(--danger);
+  --color-danger-bg: var(--danger-bg);
+  --color-info: var(--info);
+  --color-info-bg: var(--info-bg);
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
+  line-height: 1.5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

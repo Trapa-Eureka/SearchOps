@@ -316,3 +316,4 @@ sandbox/
 screenshots/raw/
 *.mov
 *.gif.tmp
+.gstack/

@@ -107,14 +107,14 @@ RSpec.describe "Api::V1::Intents", type: :request do
       expect(data["notes"]).to include("engine_not_implemented")
     end
 
-    it "lists missing fields and suggests a query" do
+    it "lists missing fields" do
       stub_laya
 
       post "/api/v1/intent/plan", params: { text: "Where does example.com rank?" }, as: :json
 
       expect(data).to include("status" => "needs_clarification", "reason" => "missing_fields", "next_step" => "complete_fields")
       expect(data["missing"]).to eq(%w[query country language])
-      expect(data["query_suggestions"]).to eq([ "Where does rank?" ])
+      expect(data["query_suggestions"]).to eq([])
     end
 
     it "can be fetched again" do

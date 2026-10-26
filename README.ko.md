@@ -2,7 +2,7 @@
 
 [English](README.md) · **한국어**
 
-> **상태: Stage 5 (Laya 의도 사전 분류기) 완료: 자연어 문장이 검증된 확인 가능한 계획이 되고, Laya 없이도 전부 동작합니다. 713개 spec과 실제 로컬 Laya 서버로 검증했습니다. 정확도는 보통 수준입니다(작은 직접 라벨 세트에서 의도 74~77%, 한국어 62~64%). 그래서 대부분의 문장은 바로 실행 가능한 계획이 아니라 되묻기로 끝납니다. [docs/intent-eval.md](docs/intent-eval.md)를 참고하세요. `job_search`는 이해하지만 아직 실행할 수 없습니다(`google_jobs` 엔진 없음).**
+> **상태: Stage 6 (Next.js 대시보드) 완료: 개요, 키워드, 순위 이력이 있는 결과, API 상태, 자연어 플래너까지 영어·한국어 화면을 제공하며, Rails API의 실제 데이터만 표시합니다. 백엔드 726개 spec, 프런트엔드 281개 테스트(모든 화면에 대한 axe 접근성 검사 포함)와, 실제 Rails 서버·실제 로컬 Laya 서버를 붙여 UI를 직접 조작해 검증했습니다. 자연어 계획의 정확도는 보통 수준입니다(작은 직접 라벨 세트에서 의도 74~77%, 한국어 62~64%). 그래서 대부분의 문장은 바로 실행 가능한 계획이 아니라 되묻기로 끝납니다. [docs/intent-eval.md](docs/intent-eval.md)를 참고하세요. `job_search`는 이해하지만 아직 실행할 수 없습니다(`google_jobs` 엔진 없음).**
 > 아래 체크리스트는 이 프로젝트가 **끝났을 때 "예"라고 답할 수 있어야 하는 기준**이며, 구현된 항목에만 `[x]`를 표시합니다.
 
 SearchOps는 [SerpApi](https://serpapi.com)로 키워드 검색을 실행하고, 결과를 스냅샷으로 저장해 **대상 도메인의 순위 변화**를 추적하며, **API 호출의 지연·오류·캐시·사용량**을 관찰하는 웹 애플리케이션입니다. Ruby/Rails를 학습하면서 운영 관점(안정성, 관측성, 테스트)을 갖춘 서비스를 만드는 것이 목적입니다.
@@ -67,7 +67,7 @@ Next.js + TypeScript + Tailwind dashboard
 - Backend: Ruby, Rails(API mode), Active Record, PostgreSQL, RSpec(또는 Minitest 중 하나로 통일)
 - Jobs: Solid Queue 기반 Active Job (같은 PostgreSQL에 저장, Redis 불필요), 스케줄 점검은 반복 작업(recurring)으로 실행
 - 검색: SerpApi (공식 Ruby 클라이언트 호환 확인 시 사용, 아니면 명시적 타임아웃의 얇은 HTTPS 어댑터)
-- Frontend: Next.js, React, TypeScript, Tailwind
+- Frontend: Next.js(App Router), React, TypeScript, Tailwind, 데이터 조회는 SWR, 테스트는 Vitest + Testing Library + axe-core. 같은 출처의 `/api` 프록시로 Rails하고만 통신하므로 CORS 설정이 필요 없고 브라우저에 인증 정보가 없습니다
 - 의도 분류(선택): 로컬 `laya-serve`로 실행하는 Laya(`multilingual` 체크포인트), `Intent::LayaClassifier` 뒤에 격리. 계약과 검증 내용: [docs/laya-contract.md](docs/laya-contract.md), 측정한 정확도: [docs/intent-eval.md](docs/intent-eval.md) (영어)
 
 ## 진행 단계
@@ -81,8 +81,8 @@ Next.js + TypeScript + Tailwind dashboard
 | 2 | 도메인 모델, REST API (Keyword CRUD) | 완료 |
 | 3 | SerpApi 연동, 정규화, 순위 추적 | 완료 |
 | 4 | 스케줄 잡, 캐시, 복원력, 메트릭 | 완료 |
-| 5 | Laya 사전 분류기 연동 | 완료 — 확인 대기 |
-| 6 | Next.js 대시보드 | 대기 |
+| 5 | Laya 사전 분류기 연동 | 완료 |
+| 6 | Next.js 대시보드 | 완료 — 확인 대기 |
 | 7 | 테스트 · 비교 실험(A/B/C) · 벤치마크 | 대기 |
 | 8 | 배포 · 운영 | 대기 |
 
@@ -107,9 +107,26 @@ bin/rails server              # API + 백그라운드 워커 (개발 환경에�
 
 `GET /health`는 `200 {"status":"ok","database":"up"}`를 반환하고, DB에 연결할 수 없으면 `503 {"status":"degraded","database":"down"}`을 반환합니다(내부 오류 내용은 응답에 노출하지 않고 로그에 오류 클래스만 남깁니다). Rails 기본 `GET /up`도 그대로 있습니다.
 
+## 대시보드
+
+```bash
+cd frontend
+cp .env.example .env.local    # API_BASE_URL=http://127.0.0.1:3000 (서버 측 전용, 브라우저로 전송되지 않음)
+pnpm install
+pnpm dev                      # http://localhost:3001 — 먼저 Rails 서버(3000번 포트)를 실행하세요
+
+pnpm test                     # 281개 테스트 (axe 접근성 검사 포함)
+pnpm typecheck && pnpm lint
+pnpm build && pnpm start
+```
+
+화면: **개요**(성공률, 중앙값/p95 지연, SerpApi 호출 수, 캐시 적중률, 예산, 확인이 필요한 키워드), **키워드**(생성·수정·일시중지·지금 검색), **키워드 상세**(순위 차트와 표, 검색 실행 목록, 대상 도메인을 강조한 저장된 결과), **API 상태**(요청 타임라인, 원인별 실패, 재시도, 큐·워커 상태, 오래된 데이터 키워드), **플래너**(문장, 제안된 계획, 수정 후 확인 또는 되묻기). UI는 영어와 한국어를 지원합니다.
+
+알아둘 동작: **순위 숫자가 작을수록 좋으며** 차트에도 그렇게 표시합니다. 찾지 못한 순위는 별도의 "찾을 수 없음" 영역에 그리고 0위로 표시하지 않습니다. 오래된(stale) 데이터에는 마지막 정상 결과의 시각을 붙입니다. 캐시 적중은 데이터가 처음 수집된 시각을 보여줍니다. 상태는 색만으로 구분하지 않고 항상 글자와 기호로 표시합니다. 모든 숫자는 Rails API에서 가져오며, 데이터가 없으면 지어낸 값 대신 대시(—)와 설명을 보여줍니다. 대시보드를 위해 `GET /api/v1/options`(허용 값과 한도)와 `GET /api/v1/searches`(키워드 전체의 최근 실행) 두 엔드포인트를 추가했습니다. 아직 인증이 없으므로 로컬에서만 실행하세요.
+
 ## API
 
-`/api/v1/keywords` 키워드 CRUD, 비동기 검색(`POST/GET /api/v1/keywords/:id/searches`), 순위 이력(`GET /api/v1/keywords/:id/rank_history`), 메트릭(`GET /api/v1/metrics/summary`)을 검증, 페이지네이션, 공통 JSON 오류 형식과 함께 제공합니다. 선택 기능인 자연어 계획은 `POST /api/v1/intent/plan`, `POST /api/v1/intent/plan/:id/confirm`입니다. 전체 계약, 실패 매핑, 재시도·캐시·예산 규칙, 알려진 제한은 [docs/api-contract.md](docs/api-contract.md)(영어)를 참고하세요.
+`/api/v1/keywords` 키워드 CRUD, 비동기 검색(`POST/GET /api/v1/keywords/:id/searches`), 순위 이력(`GET /api/v1/keywords/:id/rank_history`), 메트릭(`GET /api/v1/metrics/summary`), 대시보드용 `GET /api/v1/options`·`GET /api/v1/searches`를 검증, 페이지네이션, 공통 JSON 오류 형식과 함께 제공합니다. 선택 기능인 자연어 계획은 `POST /api/v1/intent/plan`, `POST /api/v1/intent/plan/:id/confirm`입니다. 전체 계약, 실패 매핑, 재시도·캐시·예산 규칙, 알려진 제한은 [docs/api-contract.md](docs/api-contract.md)(영어)를 참고하세요.
 
 검색은 요청 안에서 SerpApi를 호출하지 않습니다. 요청을 큐에 넣으면 워커가 호출을 수행하고, 클라이언트는 실행(run)을 조회해서 결과를 확인합니다.
 

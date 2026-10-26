@@ -1,6 +1,6 @@
 # API Contract (v1)
 
-Status after Stage 4: keyword CRUD, asynchronous searches through SerpApi (with caching, de-duplication, retries, and scheduled checks), run listing, rank history, and a metrics summary. Stage 5 adds optional natural-language planning (`/intent/plan`).
+Status after Stage 4: keyword CRUD, asynchronous searches through SerpApi (with caching, de-duplication, retries, and scheduled checks), run listing, rank history, and a metrics summary. Stage 5 adds optional natural-language planning (`/intent/plan`). Stage 6 adds two read-only endpoints for the dashboard (`/options`, `/searches`).
 
 Base path: `/api/v1`. Format: JSON. **No authentication yet**: the API is for local development only and must not be exposed publicly until Stage 8 adds authentication, CORS, and HTTPS.
 
@@ -286,6 +286,30 @@ Turns a sentence into a **proposed plan**; nothing runs until the client confirm
 - The user's keyword and domain are not sent to Laya. The Laya address is an operator setting and never comes from a request.
 - The sentence is stored only in `intent_requests.original_text`, never logged (log lines carry ids, outcome, intent, confidence, reason, and timings), never returned, and deleted after `INTENT_RETENTION_DAYS` (default 30) by `PurgeIntentRequestsJob`. Keywords and runs created by a confirmed plan do not reference the sentence and stay.
 
+## Options (for clients)
+
+`GET /api/v1/options` returns the allowed values and limits, read from the models that enforce them, so a client never copies them. Read-only, no parameters.
+
+```json
+{ "data": {
+    "engines": ["google"], "countries": ["us", "ph", "..."], "languages": ["en", "ko", "..."], "schedules": ["manual", "daily", "weekly"],
+    "limits": { "query_max_length": 200, "location_max_length": 100, "max_keywords": 50, "intent_text_max_length": 500, "max_per_page": 100 },
+    "features": { "intent_planning": false }
+} }
+```
+
+`features.intent_planning` is `true` only when `LAYA_ENABLED` is on. It says nothing about whether the Laya server is reachable; that is only discovered when a sentence is classified.
+
+## Recent runs across keywords
+
+`GET /api/v1/searches` lists runs of every keyword, newest first, paginated. Each item is the run object (see [Run object](#run-object)) without result rows, plus `keyword: { id, query, country, language, target_domain }`. It is the data behind the dashboard's request timeline. A single run with its results stays under `GET /keywords/:id/searches/:run_id`.
+
+| Query | Effect |
+|---|---|
+| `status` | `queued`, `running`, `succeeded`, or `failed`. Any other value is ignored (not an error). |
+| `error_category` | One of the failure categories. Any other value is ignored. |
+| `keyword_id` | Digits only; anything else is ignored. |
+
 ## Metrics
 
 `GET /api/v1/metrics/summary?window=24h` (`1h`, `24h` default, `7d`, or `30d`; anything else is 400) returns operational numbers computed from the runs table. It contains counts and timings only, never search terms, error text, or credentials.
@@ -319,6 +343,7 @@ Structured log lines (no search terms or credentials) are written for each step:
 
 ## Known limitations
 
+- The dashboard is a client of this API only; it holds no data and no credential of its own. Without authentication it must stay local (Stage 8).
 - No authentication, and rate limiting only on `POST /intent/plan` (per process, per IP). Local use only until Stage 8.
 - Natural-language planning: intent accuracy is 74 to 77% on small, author-labeled sets (Korean 62 to 64%), and most sentences end in a clarification, not a ready plan. `job_search` cannot be confirmed because its engine is not implemented. See [intent-eval.md](intent-eval.md).
 - The daily budget check is not atomic, so simultaneous requests can overshoot it slightly. Queued runs reserve a call, which narrows but does not remove the gap.

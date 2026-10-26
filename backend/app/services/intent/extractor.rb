@@ -39,7 +39,7 @@ module Intent
         target_domain: domains.one? ? domains.first : nil,
         domain_candidates: domains,
         query: single_query(quoted),
-        query_candidates: query_candidates(quoted, domains),
+        query_candidates: query_candidates(quoted),
         compare_cue: cue?(Lexicon::COMPARE_CUES),
         only_new_cue: cue?(Lexicon::ONLY_NEW_CUES),
         masked_text: masked_text(quoted)
@@ -132,11 +132,12 @@ module Intent
       runs.one? && @text.match?(CJK) ? runs.first : nil
     end
 
-    # Suggestions the user can pick from; none is applied automatically.
-    def query_candidates(quoted, domains)
+    # Suggestions the user can pick from; none is applied automatically. Only phrases the rules
+    # are fairly sure are a keyword: quoted text, or a Latin phrase inside a sentence in another
+    # script. A cleaned-up copy of the whole sentence is not offered: it is rarely a good keyword.
+    def query_candidates(quoted)
       candidates = quoted.reject { |phrase| DomainNormalizer.call(phrase) }
       candidates += latin_runs if @text.match?(CJK)
-      candidates << cleaned_text(domains) if candidates.empty?
       candidates.map { |candidate| candidate.first(Keyword::QUERY_MAX_LENGTH) }.reject(&:blank?).uniq.first(3)
     end
 
@@ -148,12 +149,6 @@ module Intent
         words = run.split
         words.any? { |word| word.length >= 3 && STOPWORDS.exclude?(word.downcase) }
       end.uniq
-    end
-
-    def cleaned_text(domains)
-      cleaned = @text.dup
-      domains.each { |domain| cleaned = cleaned.gsub(/\S*#{Regexp.escape(domain)}\S*/i, " ") }
-      cleaned.squish
     end
   end
 end

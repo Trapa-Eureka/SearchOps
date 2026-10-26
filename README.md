@@ -2,7 +2,7 @@
 
 **English** · [Korean](README.ko.md)
 
-> **Status: Stage 5 (Laya intent pre-classifier) is complete: a natural-language sentence becomes a validated, confirmable plan, and everything works without Laya. Verified with 713 specs and against a real local Laya server. Accuracy is modest (intent 74 to 77% on small author-labeled sets, Korean 62 to 64%), so most sentences end in a clarification rather than a ready plan; see [docs/intent-eval.md](docs/intent-eval.md). `job_search` is understood but cannot run yet (no `google_jobs` engine).**
+> **Status: Stage 6 (Next.js dashboard) is complete: six screens (overview, keywords, results with rank history, API health, natural-language planner) in English and Korean, showing only real data from the Rails API. Verified with 726 backend specs, 281 frontend tests (including an axe accessibility check of every screen), and by driving the real UI against a real Rails server and a real local Laya server. Natural-language planning accuracy is modest (intent 74 to 77% on small author-labeled sets, Korean 62 to 64%), so most sentences end in a clarification rather than a ready plan; see [docs/intent-eval.md](docs/intent-eval.md). `job_search` is understood but cannot run yet (no `google_jobs` engine).**
 > The checklist below defines what must be answerable with "yes" when the project is finished. An item is marked `[x]` only once it is implemented.
 
 SearchOps runs keyword searches through [SerpApi](https://serpapi.com), stores the results as snapshots, tracks **rank changes for a target domain**, and monitors **latency, errors, cache hits, and usage** of the upstream API. The goal is to learn Ruby/Rails by building a service with production-minded concerns: reliability, observability, and testing.
@@ -67,7 +67,7 @@ Security boundary: the frontend talks only to Rails, and only Rails calls upstre
 - Backend: Ruby, Rails (API mode), Active Record, PostgreSQL, RSpec (or Minitest, one only)
 - Jobs: Active Job on Solid Queue (stored in the same PostgreSQL database, no Redis), with recurring tasks for scheduled checks
 - Search: SerpApi, via the official Ruby client if verified compatible, otherwise a small HTTPS adapter with explicit timeouts
-- Frontend: Next.js, React, TypeScript, Tailwind
+- Frontend: Next.js (App Router), React, TypeScript, Tailwind, SWR for data fetching, Vitest + Testing Library + axe-core for tests. It talks only to Rails through a same-origin `/api` proxy, so there is no CORS setup and no credential in the browser
 - Intent classification (optional): Laya (`multilingual` checkpoint) running locally as `laya-serve`, behind `Intent::LayaClassifier`. Contract and what was verified: [docs/laya-contract.md](docs/laya-contract.md). Measured accuracy: [docs/intent-eval.md](docs/intent-eval.md)
 
 ## Roadmap
@@ -81,8 +81,8 @@ After each stage, a summary and a proposed commit message are produced, and the 
 | 2 | Domain model, REST API (keyword CRUD) | Done |
 | 3 | SerpApi integration, normalization, rank tracking | Done |
 | 4 | Scheduled jobs, caching, resilience, metrics | Done |
-| 5 | Laya pre-classifier integration | Done, awaiting confirmation |
-| 6 | Next.js dashboard | Pending |
+| 5 | Laya pre-classifier integration | Done |
+| 6 | Next.js dashboard | Done, awaiting confirmation |
 | 7 | Tests, A/B/C comparison, benchmarks | Pending |
 | 8 | Deployment and operations | Pending |
 
@@ -107,9 +107,26 @@ bin/rails server              # API + background worker (Solid Queue runs inside
 
 `GET /health` returns `200 {"status":"ok","database":"up"}`, or `503 {"status":"degraded","database":"down"}` when the database is unreachable (the underlying error is logged by class only, never returned). Rails' built-in `GET /up` also remains.
 
+## Dashboard
+
+```bash
+cd frontend
+cp .env.example .env.local    # API_BASE_URL=http://127.0.0.1:3000 (server-side only, never sent to the browser)
+pnpm install
+pnpm dev                      # http://localhost:3001; start the Rails server (port 3000) first
+
+pnpm test                     # 281 tests, including axe accessibility checks
+pnpm typecheck && pnpm lint
+pnpm build && pnpm start
+```
+
+Screens: **Overview** (success rate, median/p95 latency, SerpApi calls, cache hit rate, budget, keywords that need attention), **Keywords** (create, edit, pause, search now), **Keyword detail** (rank chart and table, search runs, stored results with the target domain highlighted), **API health** (request timeline, failures by cause, retries, queue and worker state, stale keywords), **Planner** (sentence, proposed plan, edit and confirm, or a clarification). The UI is available in English and Korean.
+
+Behaviours worth knowing: a **lower rank number is better** and the chart says so; a rank that was not found is drawn in its own "Not found" band and is never shown as rank 0; stale data is labelled with the time of the last good result; a cache hit shows the time the data was originally captured; status is always given in words and a symbol, not by colour alone. Every number comes from the Rails API; with no data the dashboard shows dashes and an explanation, not made-up values. It reads two endpoints added for it: `GET /api/v1/options` (allowed values and limits) and `GET /api/v1/searches` (recent runs across keywords). There is no authentication yet, so run it locally only.
+
 ## API
 
-Keyword CRUD under `/api/v1/keywords`; asynchronous searches with `POST/GET /api/v1/keywords/:id/searches`; `GET /api/v1/keywords/:id/rank_history`; `GET /api/v1/metrics/summary`. All with validation, pagination, and a shared JSON error format. Optional natural-language planning with `POST /api/v1/intent/plan` and `POST /api/v1/intent/plan/:id/confirm`. Full contract, failure mapping, retry/cache/budget rules, and limitations: [docs/api-contract.md](docs/api-contract.md).
+Keyword CRUD under `/api/v1/keywords`; asynchronous searches with `POST/GET /api/v1/keywords/:id/searches`; `GET /api/v1/keywords/:id/rank_history`; `GET /api/v1/metrics/summary`; `GET /api/v1/options` and `GET /api/v1/searches` for the dashboard. All with validation, pagination, and a shared JSON error format. Optional natural-language planning with `POST /api/v1/intent/plan` and `POST /api/v1/intent/plan/:id/confirm`. Full contract, failure mapping, retry/cache/budget rules, and limitations: [docs/api-contract.md](docs/api-contract.md).
 
 A search does not call SerpApi inside the request. It is queued, a worker performs the call, and you poll the run:
 
